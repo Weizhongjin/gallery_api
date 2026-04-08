@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     s3_force_path_style: bool = True
 
     embed_endpoint: str = "http://localhost:8001"
+    embed_model: str = "Marqo/marqo-fashionSigLIP"
     vlm_endpoint: str = "http://localhost:8002"
+    vlm_api_key: str = ""
+    vlm_model: str = "qwen-vl-plus"
 
     class Config:
         env_file = ".env"
