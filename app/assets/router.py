@@ -1,18 +1,38 @@
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.assets.models import Asset
+from app.assets.models import Asset, ProcessingJob
 from app.assets.schemas import AssetOut, AssetTagPatch, AssetWithTags, TagOut
-from app.assets.service import get_asset_tags, list_assets_filtered, patch_human_tags, upload_asset
+from app.assets.service import (
+    create_reprocess_job, get_asset_tags, list_assets_filtered,
+    patch_human_tags, run_reprocess_job, trigger_asset_processing, upload_asset,
+)
 from app.auth.deps import get_current_user, require_role
 from app.auth.models import User, UserRole
 from app.database import get_db
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
+
+class ProcessRequest(BaseModel):
+    stages: list[str] = ["classify", "embed"]
+
 _UPLOAD_ROLES = (UserRole.admin, UserRole.editor)
+
+
+@router.post("/reprocess", status_code=202)
+def reprocess_all(
+    body: ProcessRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    job = create_reprocess_job(db, body.stages)
+    background_tasks.add_task(run_reprocess_job, db, job.id, body.stages)
+    return {"job_id": str(job.id), "stages": body.stages, "total": job.total}
 
 
 @router.post("/upload", response_model=AssetOut, status_code=status.HTTP_201_CREATED)
@@ -75,3 +95,18 @@ def patch_tags(
         created_at=asset.created_at,
         tags=[TagOut(node_id=t.node_id, source=t.source, confidence=t.confidence) for t in tags],
     )
+
+
+@router.post("/{asset_id}/process", status_code=202)
+def process_asset(
+    asset_id: uuid.UUID,
+    body: ProcessRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    trigger_asset_processing(db, asset, body.stages, background_tasks)
+    return {"asset_id": str(asset_id), "stages": body.stages}
