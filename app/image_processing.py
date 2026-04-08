@@ -14,10 +14,9 @@ class ImageVariants:
 
 def process_image(data: bytes) -> ImageVariants:
     img = Image.open(io.BytesIO(data))
+    original_width, original_height = img.size
     if img.mode != "RGB":
         img = img.convert("RGB")
-
-    original_width, original_height = img.size
 
     display_img = _resize(img, 1200)
     thumb_img = _resize(img, 400)
@@ -33,7 +32,7 @@ def process_image(data: bytes) -> ImageVariants:
 def _resize(img: Image.Image, max_size: int) -> Image.Image:
     longest = max(img.width, img.height)
     if longest <= max_size:
-        return img
+        return img.copy()
     ratio = max_size / longest
     new_size = (round(img.width * ratio), round(img.height * ratio))
     return img.resize(new_size, Image.LANCZOS)
