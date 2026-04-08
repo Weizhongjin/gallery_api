@@ -39,6 +39,20 @@ class S3Storage:
             ExpiresIn=expires,
         )
 
+    def list_objects(self, prefix: str) -> list[str]:
+        """List all object keys with the given prefix."""
+        keys = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
+        return keys
+
+    def get_object(self, key: str) -> bytes:
+        """Download and return raw bytes for an object key."""
+        response = self._client.get_object(Bucket=self._bucket, Key=key)
+        return response["Body"].read()
+
 
 def uri_to_key(uri: str) -> str:
     """Convert s3://bucket/key to key."""

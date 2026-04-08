@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.assets.models import Asset, ProcessingJob
 from app.assets.schemas import AssetOut, AssetTagPatch, AssetWithTags, TagOut
 from app.assets.service import (
-    create_reprocess_job, get_asset_tags, list_assets_filtered,
+    batch_ingest_from_storage, create_reprocess_job, get_asset_tags, list_assets_filtered,
     patch_human_tags, run_reprocess_job, trigger_asset_processing, upload_asset,
 )
 from app.auth.deps import get_current_user, require_role
@@ -20,7 +20,24 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 class ProcessRequest(BaseModel):
     stages: list[str] = ["classify", "embed"]
 
+
+class BatchIngestStorageRequest(BaseModel):
+    prefix: str
+    stages: list[str] = ["classify", "embed"]
+
+
 _UPLOAD_ROLES = (UserRole.admin, UserRole.editor)
+
+
+@router.post("/batch-ingest/storage", status_code=202)
+def batch_ingest_storage(
+    body: BatchIngestStorageRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    job = batch_ingest_from_storage(db, body.prefix, body.stages, background_tasks)
+    return {"job_id": str(job.id), "prefix": body.prefix, "stages": body.stages}
 
 
 @router.post("/reprocess", status_code=202)

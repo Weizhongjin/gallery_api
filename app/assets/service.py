@@ -131,3 +131,87 @@ def run_reprocess_job(db: Session, job_id, stages: list[str]) -> None:
 
     job.status = JobStatus.done
     db.flush()
+
+
+def batch_ingest_from_storage(db: Session, prefix: str, stages: list[str], background_tasks) -> "ProcessingJob":
+    """List S3 objects with prefix, create a ProcessingJob, queue background ingest."""
+    from app.assets.models import ProcessingJob
+
+    storage = get_storage()
+    keys = storage.list_objects(prefix)
+
+    image_exts = {".jpg", ".jpeg", ".png", ".webp"}
+    image_keys = [k for k in keys if any(k.lower().endswith(ext) for ext in image_exts)]
+
+    job = ProcessingJob(stages=stages, total=len(image_keys), status="pending")
+    db.add(job)
+    db.flush()
+    db.refresh(job)
+
+    background_tasks.add_task(_ingest_storage_batch, db, job.id, image_keys, prefix, stages)
+    return job
+
+
+def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, stages: list[str]) -> None:
+    """Background task: download each key, create Asset, optionally run AI processing."""
+    import uuid as _uuid2
+    from app.assets.models import ImageGroup, JobStatus, ProcessingJob
+    from app.image_processing import process_image
+
+    job = db.get(ProcessingJob, job_id)
+    job.status = JobStatus.running
+    db.flush()
+
+    storage = get_storage()
+    vlm = None
+    embed = None
+    if "classify" in stages:
+        from app.ai.vlm_client import get_vlm_client
+        vlm = get_vlm_client()
+    if "embed" in stages:
+        from app.ai.embed_client import get_embedding_client
+        embed = get_embedding_client()
+
+    group = ImageGroup(name=prefix, path=prefix)
+    db.add(group)
+    db.flush()
+
+    for key in keys:
+        try:
+            data = storage.get_object(key)
+            variants = process_image(data)
+            filename = key.split("/")[-1]
+            base = f"assets/{_uuid2.uuid4()}"
+            original_uri = storage.upload(f"{base}/original/{filename}", data, "image/jpeg")
+            display_uri = storage.upload(f"{base}/display/{filename}", variants.display, "image/jpeg")
+            thumb_uri = storage.upload(f"{base}/thumb/{filename}", variants.thumb, "image/jpeg")
+
+            from app.assets.models import Asset
+            asset = Asset(
+                group_id=group.id,
+                original_uri=original_uri,
+                display_uri=display_uri,
+                thumb_uri=thumb_uri,
+                filename=filename,
+                width=variants.original_width,
+                height=variants.original_height,
+                file_size=len(data),
+                feature_status={"classify": "pending", "embed": "pending"},
+            )
+            db.add(asset)
+            db.flush()
+
+            if vlm:
+                from app.ai.processing import classify_asset
+                classify_asset(db, asset, vlm, storage)
+            if embed:
+                from app.ai.processing import embed_asset
+                embed_asset(db, asset, embed, storage)
+
+            job.processed += 1
+        except Exception:
+            job.failed_count += 1
+        db.flush()
+
+    job.status = JobStatus.done
+    db.flush()
