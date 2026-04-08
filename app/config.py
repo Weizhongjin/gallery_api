@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     vlm_api_key: str = ""
     vlm_model: str = "qwen-vl-plus"
 
+    async_mode: str = "background"        # "background" | "celery"
+    celery_broker_url: str = "redis://localhost:6379/1"
+    celery_result_backend: str = "redis://localhost:6379/1"
+
     class Config:
         env_file = ".env"
 

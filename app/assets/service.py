@@ -74,16 +74,23 @@ def list_assets_filtered(db: Session, tag_ids: list[uuid.UUID], page: int, page_
 import uuid as _uuid
 
 
-def trigger_asset_processing(db: Session, asset, stages: list[str], background_tasks) -> None:
-    """Queue classify/embed stages as background tasks."""
-    from app.ai.vlm_client import get_vlm_client
-    from app.ai.embed_client import get_embedding_client
-    from app.ai.processing import classify_asset, embed_asset
+def trigger_asset_processing(db: Session, asset, stages: list[str], background_tasks, async_mode: str = None) -> None:
+    """Queue classify/embed stages. Uses BackgroundTasks or Celery based on async_mode."""
+    from app.config import settings
+    mode = async_mode or settings.async_mode
 
-    if "classify" in stages:
-        background_tasks.add_task(classify_asset, db, asset, get_vlm_client(), get_storage())
-    if "embed" in stages:
-        background_tasks.add_task(embed_asset, db, asset, get_embedding_client(), get_storage())
+    if mode == "celery":
+        from app.ai.tasks import celery_process_asset
+        celery_process_asset.delay(str(asset.id), stages)
+    else:
+        from app.ai.vlm_client import get_vlm_client
+        from app.ai.embed_client import get_embedding_client
+        from app.ai.processing import classify_asset, embed_asset
+
+        if "classify" in stages:
+            background_tasks.add_task(classify_asset, db, asset, get_vlm_client(), get_storage())
+        if "embed" in stages:
+            background_tasks.add_task(embed_asset, db, asset, get_embedding_client(), get_storage())
 
 
 def create_reprocess_job(db: Session, stages: list[str]):
@@ -96,8 +103,16 @@ def create_reprocess_job(db: Session, stages: list[str]):
     return job
 
 
-def run_reprocess_job(db: Session, job_id, stages: list[str]) -> None:
+def run_reprocess_job(db: Session, job_id, stages: list[str], async_mode: str = None) -> None:
     """Process all assets page by page. Updates job status as it goes."""
+    from app.config import settings
+    mode = async_mode or settings.async_mode
+
+    if mode == "celery":
+        from app.ai.tasks import celery_run_reprocess_job
+        celery_run_reprocess_job.delay(str(job_id), stages)
+        return
+
     from app.assets.models import ProcessingJob, JobStatus
     from app.ai.vlm_client import get_vlm_client
     from app.ai.embed_client import get_embedding_client
