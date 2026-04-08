@@ -12,8 +12,11 @@ def db_engine():
 
 @pytest.fixture
 def db(db_engine):
-    SessionLocal = sessionmaker(bind=db_engine)
+    connection = db_engine.connect()
+    transaction = connection.begin()
+    SessionLocal = sessionmaker(bind=connection)
     session = SessionLocal()
     yield session
-    session.rollback()
     session.close()
+    transaction.rollback()
+    connection.close()
