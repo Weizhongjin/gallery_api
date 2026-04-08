@@ -1,4 +1,5 @@
 import uuid
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.assets.models import Asset, AssetTag, DimensionEnum, TaxonomyNode
@@ -23,3 +24,20 @@ def attribute_search(
         query = query.filter(Asset.id.in_(sub))
 
     return query.order_by(Asset.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+
+def vector_search(db: Session, query_vector: list[float], limit: int = 50) -> list:
+    """pgvector cosine similarity search. Returns rows with asset fields + distance."""
+    vector_str = "[" + ",".join(str(x) for x in query_vector) + "]"
+    rows = db.execute(
+        sa_text("""
+            SELECT a.id, a.filename, a.thumb_uri, a.display_uri, a.width, a.height, a.created_at,
+                   (e.vector <=> CAST(:qv AS vector)) AS distance
+            FROM asset a
+            JOIN asset_embedding e ON a.id = e.asset_id
+            ORDER BY distance
+            LIMIT :limit
+        """),
+        {"qv": vector_str, "limit": limit},
+    ).fetchall()
+    return rows
