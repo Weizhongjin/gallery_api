@@ -29,3 +29,43 @@ def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
     db.commit()
     db.refresh(asset)
     return asset
+
+
+def patch_human_tags(db: Session, asset_id: uuid.UUID, add: list[uuid.UUID], remove: list[uuid.UUID]):
+    from app.assets.models import AssetTag, TagSource
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        return None
+
+    if remove:
+        db.query(AssetTag).filter(
+            AssetTag.asset_id == asset_id,
+            AssetTag.node_id.in_(remove),
+            AssetTag.source == TagSource.human,
+        ).delete(synchronize_session=False)
+
+    for node_id in add:
+        existing = db.query(AssetTag).filter(
+            AssetTag.asset_id == asset_id,
+            AssetTag.node_id == node_id,
+        ).first()
+        if not existing:
+            db.add(AssetTag(asset_id=asset_id, node_id=node_id, source=TagSource.human))
+
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+def get_asset_tags(db: Session, asset_id: uuid.UUID) -> list:
+    from app.assets.models import AssetTag
+    return db.query(AssetTag).filter(AssetTag.asset_id == asset_id).all()
+
+
+def list_assets_filtered(db: Session, tag_ids: list[uuid.UUID], page: int, page_size: int) -> list[Asset]:
+    from app.assets.models import AssetTag
+    query = db.query(Asset)
+    for node_id in tag_ids:
+        sub = db.query(AssetTag.asset_id).filter(AssetTag.node_id == node_id).scalar_subquery()
+        query = query.filter(Asset.id.in_(sub))
+    return query.order_by(Asset.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
