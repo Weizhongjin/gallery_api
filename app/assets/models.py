@@ -157,3 +157,23 @@ class LookbookAccess(Base):
     granted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class JobStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_job"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), nullable=False, server_default="pending")
+    stages: Mapped[list] = mapped_column(JSONB, nullable=False)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
