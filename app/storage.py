@@ -42,6 +42,8 @@ class S3Storage:
 
 def uri_to_key(uri: str) -> str:
     """Convert s3://bucket/key to key."""
+    if not uri.startswith("s3://"):
+        raise ValueError(f"Expected s3:// URI, got: {uri!r}")
     return uri.split("/", 3)[3]
 
 

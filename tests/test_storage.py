@@ -4,7 +4,7 @@ from app.storage import S3Storage
 
 
 @pytest.fixture
-def mock_s3(monkeypatch):
+def mock_s3():
     mock_client = MagicMock()
     with patch("app.storage.boto3.client", return_value=mock_client):
         storage = S3Storage(
@@ -46,3 +46,12 @@ def test_get_presigned_url(mock_s3):
 def test_uri_to_key():
     from app.storage import uri_to_key
     assert uri_to_key("s3://test-bucket/images/test.jpg") == "images/test.jpg"
+    assert uri_to_key("s3://test-bucket/a/b/c/d.jpg") == "a/b/c/d.jpg"
+    assert uri_to_key("s3://test-bucket/file.jpg") == "file.jpg"
+
+
+def test_uri_to_key_invalid():
+    from app.storage import uri_to_key
+    import pytest
+    with pytest.raises(ValueError, match="Expected s3://"):
+        uri_to_key("https://example.com/file.jpg")
