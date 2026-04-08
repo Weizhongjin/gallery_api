@@ -3,3 +3,10 @@ __pycache__/
 .env
 *.egg-info/
 .pytest_cache/
+.venv/
+venv/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+*.db
