@@ -85,7 +85,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('asset_id')
     )
     op.execute("ALTER TABLE asset_embedding ADD COLUMN vector vector(768)")
-    op.execute("CREATE INDEX ON asset_embedding USING ivfflat (vector vector_cosine_ops) WITH (lists = 100)")
+    op.execute("CREATE INDEX ON asset_embedding USING hnsw (vector vector_cosine_ops)")
     op.create_table('asset_tag',
     sa.Column('asset_id', sa.UUID(), nullable=False),
     sa.Column('node_id', sa.UUID(), nullable=False),
@@ -141,4 +141,7 @@ def downgrade() -> None:
     op.drop_table('taxonomy_node')
     op.drop_table('taxonomy_candidate')
     op.drop_table('image_group')
+    op.execute("DROP TYPE IF EXISTS tagsource")
+    op.execute("DROP TYPE IF EXISTS userrole")
+    op.execute("DROP TYPE IF EXISTS dimensionenum")
     # ### end Alembic commands ###
