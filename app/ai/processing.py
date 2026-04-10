@@ -66,9 +66,15 @@ def classify_asset(db: Session, asset: Asset, vlm_client: VLMClient, storage) ->
 
 def embed_asset(db: Session, asset: Asset, embed_client: EmbeddingClient, storage, model_ver: str = "v1") -> None:
     """Generate embedding for asset.display_uri, write to asset_embedding, update feature_status."""
+    # Enforce preprocessing rule:
+    # if original is larger than 3MB, display image must be a derived (resized) object.
+    if int(asset.file_size or 0) > 3 * 1024 * 1024 and asset.display_uri == asset.original_uri:
+        raise RuntimeError(
+            f"Display image is not resized for large original (>3MB), asset_id={asset.id}"
+        )
+
     key = uri_to_key(asset.display_uri)
     image_url = storage.get_presigned_url(key)
-
     vector = embed_client.embed_image(image_url=image_url)
 
     existing = db.query(AssetEmbedding).filter(AssetEmbedding.asset_id == asset.id).first()

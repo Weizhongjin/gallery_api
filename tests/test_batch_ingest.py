@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from app.auth.models import User, UserRole
 from app.auth.service import hash_password, create_access_token
+from app.assets.service import _derive_group_from_key
 
 
 @pytest.fixture
@@ -40,3 +41,21 @@ def test_batch_ingest_storage_returns_job(client, editor_token):
 
     assert response.status_code == 202
     assert "job_id" in response.json()
+
+
+def test_derive_group_from_key_prefers_code_like_folder():
+    group_path, group_name = _derive_group_from_key(
+        "images/25冬季图片/A712742/69.jpg",
+        fallback_prefix="images/25冬季图片/",
+    )
+    assert group_path == "images/25冬季图片/A712742"
+    assert group_name == "A712742"
+
+
+def test_derive_group_from_key_uses_parent_when_no_code():
+    group_path, group_name = _derive_group_from_key(
+        "images/2026春季广告logo/套装/15112171&15142111/1.jpg",
+        fallback_prefix="images/2026春季广告logo/",
+    )
+    assert group_path == "images/2026春季广告logo/套装/15112171&15142111"
+    assert group_name == "15112171&15142111"

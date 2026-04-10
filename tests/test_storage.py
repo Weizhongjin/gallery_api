@@ -55,3 +55,34 @@ def test_uri_to_key_invalid():
     import pytest
     with pytest.raises(ValueError, match="Expected s3://"):
         uri_to_key("https://example.com/file.jpg")
+
+
+def test_load_tos_credentials_file(tmp_path):
+    from app.storage import load_tos_credentials_file
+
+    cred = tmp_path / "AccessKey.txt"
+    cred.write_text("AccessKeyId: test-ak\nSecretAccessKey: test-sk\n", encoding="utf-8")
+    ak, sk = load_tos_credentials_file(str(cred))
+    assert ak == "test-ak"
+    assert sk == "test-sk"
+
+
+def test_get_storage_uses_tos_credentials_file(monkeypatch):
+    from app.storage import get_storage, TosStorage
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_provider", "tos")
+    monkeypatch.setattr(settings, "tos_endpoint", "https://tos-cn-beijing.volces.com")
+    monkeypatch.setattr(settings, "tos_region", "cn-beijing")
+    monkeypatch.setattr(settings, "tos_bucket", "joeffe")
+    monkeypatch.setattr(settings, "tos_credentials_file", "/tmp/fake-cred")
+    monkeypatch.setattr(settings, "s3_force_path_style", True)
+
+    with patch("app.storage.load_tos_credentials_file", return_value=("ak-1", "sk-1")) as mock_load:
+        with patch("app.storage.tos.TosClientV2") as mock_tos_client:
+            mock_tos_client.return_value = MagicMock()
+            storage = get_storage()
+
+    mock_load.assert_called_once_with("/tmp/fake-cred")
+    mock_tos_client.assert_called_once_with("ak-1", "sk-1", "tos-cn-beijing.volces.com", "cn-beijing")
+    assert isinstance(storage, TosStorage)

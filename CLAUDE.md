@@ -88,6 +88,20 @@ Use `CAST(:v AS vector)` — not `:v::vector` — because psycopg2 interprets `:
 - **Embedding** (`embed_client.py`): `POST {EMBED_ENDPOINT}/v1/embeddings` with `modality: "image"|"text"` — Infinity-compatible endpoint serving `Marqo/marqo-fashionSigLIP` (768 dims).
 - **processing.py**: `classify_asset()` and `embed_asset()` — call the clients, match labels to taxonomy, write tags/embeddings. Both use `db.flush()` (not `db.commit()`) so callers control transaction boundaries.
 
+### Taxonomy Candidate Lifecycle
+
+Current production behavior:
+- `classify_asset()` only writes `asset_tag` when a VLM label matches existing `taxonomy_node`.
+- Unmatched labels are stored in `taxonomy_candidate` with `hit_count` aggregation.
+- If `taxonomy_node` is empty, `asset_tag` will remain empty and labels accumulate in `taxonomy_candidate`.
+
+Operational workflow (agreed):
+1. Keep running VLM for new assets; continuously accumulate unseen labels in `taxonomy_candidate`.
+2. Periodically review `taxonomy_candidate` (typically by high `hit_count`) and promote selected labels into `taxonomy_node`.
+3. Backfill asset tags after taxonomy updates:
+   - Current schema: re-run classify to populate `asset_tag` using newly promoted taxonomy nodes.
+   - Target schema (future optimization): persist asset-level raw VLM labels and perform remapping without re-calling VLM.
+
 ### Async processing modes
 
 Controlled by `ASYNC_MODE` env var:

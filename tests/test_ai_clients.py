@@ -1,6 +1,5 @@
 import pytest
-import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 from app.ai.vlm_client import VLMClient
 from app.ai.embed_client import EmbeddingClient
@@ -10,20 +9,20 @@ from app.ai.embed_client import EmbeddingClient
 
 def test_vlm_classify_returns_dict():
     """VLMClient.classify returns parsed dict from VLM JSON response."""
-    mock_response = {
-        "choices": [{
-            "message": {
-                "content": '{"category": "上衣", "style": ["商务风"], "color": ["藏青色"], "scene": ["通勤"], "detail": ["西装领"]}'
-            }
-        }]
-    }
-    client = VLMClient(endpoint="http://vlm:8000", api_key="test", model="qwen-vl-plus")
-
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: mock_response,
+    with patch("app.ai.vlm_client.OpenAI") as mock_openai:
+        mock_sdk = MagicMock()
+        mock_openai.return_value = mock_sdk
+        mock_sdk.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(
+                        content='{"category": "上衣", "style": ["商务风"], "color": ["藏青色"], "scene": ["通勤"], "detail": ["西装领"]}'
+                    )
+                )
+            ]
         )
+
+        client = VLMClient(endpoint="http://vlm:8000", api_key="test", model="qwen-vl-plus")
         result = client.classify(image_url="https://example.com/photo.jpg")
 
     assert result["category"] == "上衣"
@@ -33,17 +32,23 @@ def test_vlm_classify_returns_dict():
 
 def test_vlm_classify_sends_correct_request():
     """VLMClient sends image_url and text in correct OpenAI message format."""
-    client = VLMClient(endpoint="http://vlm:8000", api_key="key", model="qwen-vl-plus")
-
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"choices": [{"message": {"content": '{"category": "裤子", "style": [], "color": [], "scene": [], "detail": []}'}}]},
+    with patch("app.ai.vlm_client.OpenAI") as mock_openai:
+        mock_sdk = MagicMock()
+        mock_openai.return_value = mock_sdk
+        mock_sdk.chat.completions.create.return_value = MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(
+                        content='{"category": "裤子", "style": [], "color": [], "scene": [], "detail": []}'
+                    )
+                )
+            ]
         )
+        client = VLMClient(endpoint="http://vlm:8000", api_key="key", model="qwen-vl-plus")
         client.classify(image_url="https://s3/photo.jpg")
 
-    call_kwargs = mock_post.call_args
-    body = call_kwargs[1]["json"]
+    call_kwargs = mock_sdk.chat.completions.create.call_args
+    body = call_kwargs.kwargs
     assert body["response_format"] == {"type": "json_object"}
     messages = body["messages"]
     content = messages[0]["content"]
@@ -54,13 +59,13 @@ def test_vlm_classify_sends_correct_request():
 
 def test_vlm_classify_invalid_json_raises():
     """VLMClient raises ValueError if VLM returns non-JSON content."""
-    client = VLMClient(endpoint="http://vlm:8000", api_key="key", model="qwen-vl-plus")
-
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"choices": [{"message": {"content": "Sorry, I cannot classify this."}}]},
+    with patch("app.ai.vlm_client.OpenAI") as mock_openai:
+        mock_sdk = MagicMock()
+        mock_openai.return_value = mock_sdk
+        mock_sdk.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Sorry, I cannot classify this."))]
         )
+        client = VLMClient(endpoint="http://vlm:8000", api_key="key", model="qwen-vl-plus")
         with pytest.raises(ValueError, match="VLM returned non-JSON"):
             client.classify(image_url="https://s3/photo.jpg")
 
@@ -113,3 +118,25 @@ def test_embed_sends_correct_modality():
     assert body["modality"] == "image"
     assert body["input"] == "https://s3/photo.jpg"
     assert body["encoding_format"] == "float"
+
+
+def test_dashscope_embed_text_returns_vector():
+    client = EmbeddingClient(
+        endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3-vl-embedding",
+        provider="dashscope",
+        api_key="sk-test",
+        dimension=768,
+    )
+    fake_resp = MagicMock(output={"embeddings": [{"embedding": [0.3, 0.4, 0.5]}]})
+
+    with patch("dashscope.MultiModalEmbedding.call") as mock_call:
+        mock_call.return_value = fake_resp
+        vec = client.embed_text("测试文本")
+
+    assert vec == [0.3, 0.4, 0.5]
+    kwargs = mock_call.call_args.kwargs
+    assert kwargs["model"] == "qwen3-vl-embedding"
+    assert kwargs["enable_fusion"] is False
+    assert kwargs["dimension"] == 768
+    assert kwargs["input"] == [{"text": "测试文本"}]

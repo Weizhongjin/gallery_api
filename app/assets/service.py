@@ -1,9 +1,47 @@
+import asyncio
+import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy.orm import Session
 
 from app.assets.models import Asset
 from app.image_processing import process_image
 from app.storage import get_storage
+
+_GROUP_CODE_RE = re.compile(r"^[A-Za-z]\d{3,}[A-Za-z0-9_-]*$")
+
+
+def _derive_group_from_key(key: str, fallback_prefix: str) -> tuple[str, str]:
+    """
+    Derive logical group path/name from an object key.
+
+    Rules:
+    - Prefer file parent directory as group path.
+    - If any path segment matches style-like code (A*** / B*** ...),
+      use the last matched segment as group name.
+    - Fallback to parent folder basename, then prefix basename.
+    """
+    normalized = (key or "").strip().strip("/")
+    fallback = (fallback_prefix or "").strip().strip("/") or "default"
+
+    if not normalized:
+        return fallback, fallback.split("/")[-1] or "default"
+
+    if "/" in normalized:
+        group_path = normalized.rsplit("/", 1)[0]
+    else:
+        group_path = fallback
+
+    parts = [p for p in group_path.split("/") if p]
+    code_like = [p for p in parts if _GROUP_CODE_RE.match(p)]
+    if code_like:
+        group_name = code_like[-1].upper()
+    elif parts:
+        group_name = parts[-1]
+    else:
+        group_name = fallback.split("/")[-1] or "default"
+
+    return group_path, group_name
 
 
 def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
@@ -74,23 +112,79 @@ def list_assets_filtered(db: Session, tag_ids: list[uuid.UUID], page: int, page_
 import uuid as _uuid
 
 
+def _run_classify_standalone(asset_id: str) -> None:
+    """Open own session, run VLM classification, commit. Safe to run in a thread."""
+    from app.database import SessionLocal
+    from app.ai.vlm_client import get_vlm_client
+    from app.ai.processing import classify_asset
+
+    db = SessionLocal()
+    try:
+        asset = db.get(Asset, _uuid.UUID(asset_id))
+        if asset:
+            classify_asset(db, asset, get_vlm_client(), get_storage())
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _run_embed_standalone(asset_id: str) -> None:
+    """Open own session, generate embedding, commit. Safe to run in a thread."""
+    from app.database import SessionLocal
+    from app.ai.embed_client import get_embedding_client
+    from app.ai.processing import embed_asset
+
+    db = SessionLocal()
+    try:
+        asset = db.get(Asset, _uuid.UUID(asset_id))
+        if asset:
+            embed_asset(db, asset, get_embedding_client(), get_storage())
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+async def _process_asset_parallel(asset_id: str, stages: list[str]) -> None:
+    """Run classify and embed concurrently in a thread pool.
+
+    Each stage gets its own DB session. VLM (slow) and embedding (fast)
+    are dispatched simultaneously — neither waits for the other.
+    """
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        coros = []
+        if "classify" in stages:
+            coros.append(loop.run_in_executor(executor, _run_classify_standalone, asset_id))
+        if "embed" in stages:
+            coros.append(loop.run_in_executor(executor, _run_embed_standalone, asset_id))
+        if coros:
+            await asyncio.gather(*coros, return_exceptions=True)
+
+
 def trigger_asset_processing(db: Session, asset, stages: list[str], background_tasks, async_mode: str = None) -> None:
-    """Queue classify/embed stages. Uses BackgroundTasks or Celery based on async_mode."""
+    """Queue classify/embed stages. Uses BackgroundTasks or Celery based on async_mode.
+
+    Both modes run classify and embed independently and concurrently:
+    - background: single async BackgroundTask fans out to a ThreadPoolExecutor
+    - celery: one task dispatched per stage, run on separate workers
+    """
     from app.config import settings
     mode = async_mode or settings.async_mode
 
     if mode == "celery":
         from app.ai.tasks import celery_process_asset
-        celery_process_asset.delay(str(asset.id), stages)
+        # One task per stage — Celery scheduler assigns them to separate workers
+        for stage in stages:
+            celery_process_asset.delay(str(asset.id), [stage])
     else:
-        from app.ai.vlm_client import get_vlm_client
-        from app.ai.embed_client import get_embedding_client
-        from app.ai.processing import classify_asset, embed_asset
-
-        if "classify" in stages:
-            background_tasks.add_task(classify_asset, db, asset, get_vlm_client(), get_storage())
-        if "embed" in stages:
-            background_tasks.add_task(embed_asset, db, asset, get_embedding_client(), get_storage())
+        # Single async background task runs both stages concurrently via thread pool
+        background_tasks.add_task(_process_asset_parallel, str(asset.id), stages)
 
 
 def create_reprocess_job(db: Session, stages: list[str]):
@@ -187,15 +281,22 @@ def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, sta
         from app.ai.embed_client import get_embedding_client
         embed = get_embedding_client()
 
-    group = ImageGroup(name=prefix, path=prefix)
-    db.add(group)
-    db.flush()
+    groups_by_path: dict[str, ImageGroup] = {}
 
     for key in keys:
         try:
             data = storage.get_object(key)
             variants = process_image(data)
             filename = key.split("/")[-1]
+            group_path, group_name = _derive_group_from_key(key, fallback_prefix=prefix)
+
+            group = groups_by_path.get(group_path)
+            if not group:
+                group = ImageGroup(name=group_name, path=group_path)
+                db.add(group)
+                db.flush()
+                groups_by_path[group_path] = group
+
             base = f"assets/{_uuid2.uuid4()}"
             original_uri = storage.upload(f"{base}/original/{filename}", data, "image/jpeg")
             display_uri = storage.upload(f"{base}/display/{filename}", variants.display, "image/jpeg")
