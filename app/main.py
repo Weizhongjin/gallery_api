@@ -6,6 +6,7 @@ from app.taxonomy.router import router as taxonomy_router
 from app.lookbooks.router import router as lookbooks_router
 from app.search.router import router as search_router
 from app.jobs.router import router as jobs_router
+from app.products.router import router as products_router
 
 app = FastAPI(title="Cloth Gallery API", version="1.0.0")
 app.include_router(auth_router)
@@ -15,6 +16,7 @@ app.include_router(taxonomy_router)
 app.include_router(lookbooks_router)
 app.include_router(search_router)
 app.include_router(jobs_router)
+app.include_router(products_router)
 
 
 @app.get("/health")

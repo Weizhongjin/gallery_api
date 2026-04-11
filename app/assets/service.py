@@ -4,11 +4,20 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy.orm import Session
 
-from app.assets.models import Asset
+from app.assets.models import (
+    Asset,
+    AssetProduct,
+    AssetProductRole,
+    AssetType,
+    ImageGroup,
+    ParseStatus,
+    Product,
+)
 from app.image_processing import process_image
 from app.storage import get_storage
 
 _GROUP_CODE_RE = re.compile(r"^[A-Za-z]\d{3,}[A-Za-z0-9_-]*$")
+_PRODUCT_TOKEN_RE = re.compile(r"(?:[A-Z]\d{5,}[A-Z]?|\d{8}[A-Z]?)", re.IGNORECASE)
 
 
 def _derive_group_from_key(key: str, fallback_prefix: str) -> tuple[str, str]:
@@ -44,6 +53,92 @@ def _derive_group_from_key(key: str, fallback_prefix: str) -> tuple[str, str]:
     return group_path, group_name
 
 
+def _extract_product_codes(text: str) -> list[str]:
+    if not text:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in _PRODUCT_TOKEN_RE.findall(text.upper()):
+        if tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+    return out
+
+
+def _infer_asset_type(dataset: str) -> AssetType:
+    ds = (dataset or "").strip()
+    if "广告" in ds:
+        return AssetType.advertising
+    if "平铺图" in ds:
+        return AssetType.flatlay
+    if "季图片" in ds:
+        return AssetType.model_set
+    return AssetType.unknown
+
+
+def _split_rel_from_prefix(key: str, prefix: str) -> str:
+    k = (key or "").strip().strip("/")
+    p = (prefix or "").strip().strip("/")
+    if p and k.startswith(p + "/"):
+        return k[len(p) + 1:]
+    return k
+
+
+def _infer_from_storage_key(key: str, prefix: str) -> tuple[AssetType, str | None, str | None, ParseStatus, list[str]]:
+    rel = _split_rel_from_prefix(key, prefix)
+    parts = [x for x in rel.split("/") if x]
+    if not parts:
+        return AssetType.unknown, None, rel or None, ParseStatus.unresolved, []
+
+    dataset = parts[0]
+    asset_type = _infer_asset_type(dataset)
+    filename = parts[-1]
+    stem = filename.rsplit(".", 1)[0]
+
+    product_codes: list[str] = []
+    if asset_type == AssetType.flatlay:
+        product_codes = _extract_product_codes(stem)
+    elif asset_type == AssetType.advertising:
+        # Expected: dataset/category/product-folder/image.jpg
+        product_folder = parts[2] if len(parts) >= 4 else ""
+        product_codes = _extract_product_codes(product_folder)
+    elif asset_type == AssetType.model_set:
+        # Expected: dataset/product-folder/image.jpg
+        product_folder = parts[1] if len(parts) >= 3 else ""
+        product_codes = _extract_product_codes(product_folder)
+        if not product_codes:
+            product_codes = _extract_product_codes(stem)
+    else:
+        # Fallback for unknown datasets: parse from filename and parent dir.
+        product_codes = _extract_product_codes(stem)
+        if not product_codes and len(parts) >= 2:
+            product_codes = _extract_product_codes(parts[-2])
+
+    parse_status = ParseStatus.parsed if product_codes else ParseStatus.unresolved
+    return asset_type, dataset, rel or None, parse_status, product_codes
+
+
+def _upsert_product_by_code(db: Session, product_code: str) -> Product:
+    code = (product_code or "").strip().upper()
+    product = db.query(Product).filter(Product.product_code == code).first()
+    if product:
+        return product
+    product = Product(product_code=code)
+    db.add(product)
+    db.flush()
+    return product
+
+
+def _relation_role_for_asset_type(asset_type: AssetType) -> AssetProductRole:
+    if asset_type == AssetType.flatlay:
+        return AssetProductRole.flatlay_primary
+    if asset_type == AssetType.advertising:
+        return AssetProductRole.advertising_ref
+    if asset_type == AssetType.model_set:
+        return AssetProductRole.model_ref
+    return AssetProductRole.manual
+
+
 def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
     variants = process_image(data)
     storage = get_storage()
@@ -62,6 +157,8 @@ def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
         height=variants.original_height,
         file_size=len(data),
         feature_status={"classify": "pending", "embed": "pending"},
+        asset_type=AssetType.unknown,
+        parse_status=ParseStatus.unresolved,
     )
     db.add(asset)
     db.commit()
@@ -91,6 +188,13 @@ def patch_human_tags(db: Session, asset_id: uuid.UUID, add: list[uuid.UUID], rem
             db.add(AssetTag(asset_id=asset_id, node_id=node_id, source=TagSource.human))
 
     db.commit()
+    try:
+        from app.products.service import rebuild_product_tags_for_asset
+        rebuild_product_tags_for_asset(db, asset_id)
+        db.commit()
+    except Exception:
+        # Keep tag patch robust; product aggregation can be triggered later if needed.
+        pass
     db.refresh(asset)
     return asset
 
@@ -100,13 +204,112 @@ def get_asset_tags(db: Session, asset_id: uuid.UUID) -> list:
     return db.query(AssetTag).filter(AssetTag.asset_id == asset_id).all()
 
 
-def list_assets_filtered(db: Session, tag_ids: list[uuid.UUID], page: int, page_size: int) -> list[Asset]:
+def list_assets_filtered(
+    db: Session,
+    tag_ids: list[uuid.UUID],
+    page: int,
+    page_size: int,
+    asset_type: AssetType | None = None,
+    product_code: str | None = None,
+) -> list[Asset]:
     from app.assets.models import AssetTag
     query = db.query(Asset)
     for node_id in tag_ids:
         sub = db.query(AssetTag.asset_id).filter(AssetTag.node_id == node_id).scalar_subquery()
         query = query.filter(Asset.id.in_(sub))
+    if asset_type:
+        query = query.filter(Asset.asset_type == asset_type)
+    if product_code:
+        code = product_code.strip().upper()
+        query = query.join(AssetProduct, AssetProduct.asset_id == Asset.id).join(
+            Product, Product.id == AssetProduct.product_id
+        ).filter(Product.product_code == code).distinct()
     return query.order_by(Asset.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+
+def list_asset_products(db: Session, asset_id: uuid.UUID) -> list[dict]:
+    rows = (
+        db.query(Product, AssetProduct)
+        .join(AssetProduct, AssetProduct.product_id == Product.id)
+        .filter(AssetProduct.asset_id == asset_id)
+        .all()
+    )
+    return [
+        {
+            "product_code": p.product_code,
+            "relation_role": ap.relation_role.value,
+            "source": ap.source,
+            "confidence": ap.confidence,
+        }
+        for p, ap in rows
+    ]
+
+
+def bind_asset_to_product(
+    db: Session,
+    asset_id: uuid.UUID,
+    product_code: str,
+    relation_role: AssetProductRole = AssetProductRole.manual,
+    source: str = "manual",
+) -> dict | None:
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        return None
+
+    product = _upsert_product_by_code(db, product_code)
+    link = (
+        db.query(AssetProduct)
+        .filter(AssetProduct.asset_id == asset_id, AssetProduct.product_id == product.id)
+        .first()
+    )
+    if not link:
+        link = AssetProduct(
+            asset_id=asset_id,
+            product_id=product.id,
+            relation_role=relation_role,
+            source=source,
+        )
+        db.add(link)
+    else:
+        link.relation_role = relation_role
+        link.source = source
+
+    db.commit()
+    try:
+        from app.products.service import rebuild_product_tags_for_product
+        rebuild_product_tags_for_product(db, product.id)
+        db.commit()
+    except Exception:
+        pass
+    return {
+        "asset_id": str(asset_id),
+        "product_code": product.product_code,
+        "relation_role": link.relation_role.value,
+        "source": link.source,
+    }
+
+
+def unbind_asset_product(db: Session, asset_id: uuid.UUID, product_code: str) -> bool:
+    code = (product_code or "").strip().upper()
+    product = db.query(Product).filter(Product.product_code == code).first()
+    if not product:
+        return False
+    link = (
+        db.query(AssetProduct)
+        .filter(AssetProduct.asset_id == asset_id, AssetProduct.product_id == product.id)
+        .first()
+    )
+    if not link:
+        return False
+    db.delete(link)
+    db.commit()
+    try:
+        from app.products.service import rebuild_product_tags_for_product
+        rebuild_product_tags_for_product(db, product.id)
+        db.commit()
+    except Exception:
+        pass
+    return True
 
 
 import uuid as _uuid
@@ -264,7 +467,7 @@ def batch_ingest_from_storage(db: Session, prefix: str, stages: list[str], backg
 def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, stages: list[str]) -> None:
     """Background task: download each key, create Asset, optionally run AI processing."""
     import uuid as _uuid2
-    from app.assets.models import ImageGroup, JobStatus, ProcessingJob
+    from app.assets.models import JobStatus, ProcessingJob
     from app.image_processing import process_image
 
     job = db.get(ProcessingJob, job_id)
@@ -282,6 +485,7 @@ def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, sta
         embed = get_embedding_client()
 
     groups_by_path: dict[str, ImageGroup] = {}
+    products_by_code: dict[str, Product] = {}
 
     for key in keys:
         try:
@@ -289,6 +493,9 @@ def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, sta
             variants = process_image(data)
             filename = key.split("/")[-1]
             group_path, group_name = _derive_group_from_key(key, fallback_prefix=prefix)
+            asset_type, source_dataset, source_relpath, parse_status, product_codes = _infer_from_storage_key(
+                key, prefix
+            )
 
             group = groups_by_path.get(group_path)
             if not group:
@@ -313,9 +520,33 @@ def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, sta
                 height=variants.original_height,
                 file_size=len(data),
                 feature_status={"classify": "pending", "embed": "pending"},
+                asset_type=asset_type,
+                source_dataset=source_dataset,
+                source_relpath=source_relpath,
+                parse_status=parse_status,
             )
             db.add(asset)
             db.flush()
+
+            for code in product_codes:
+                product = products_by_code.get(code)
+                if not product:
+                    product = _upsert_product_by_code(db, code)
+                    products_by_code[code] = product
+                link = (
+                    db.query(AssetProduct)
+                    .filter(AssetProduct.asset_id == asset.id, AssetProduct.product_id == product.id)
+                    .first()
+                )
+                if not link:
+                    db.add(
+                        AssetProduct(
+                            asset_id=asset.id,
+                            product_id=product.id,
+                            relation_role=_relation_role_for_asset_type(asset_type),
+                            source="folder_or_filename",
+                        )
+                    )
 
             if vlm:
                 from app.ai.processing import classify_asset

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
-from app.assets.models import TagSource
+from app.assets.models import AssetType, ParseStatus, TagSource
 
 
 class AssetOut(BaseModel):
@@ -17,6 +17,10 @@ class AssetOut(BaseModel):
     height: int
     file_size: int
     feature_status: dict
+    asset_type: AssetType
+    parse_status: ParseStatus
+    source_dataset: str | None = None
+    source_relpath: str | None = None
     created_at: datetime
 
 
@@ -43,5 +47,9 @@ class AssetWithTags(BaseModel):
     height: int
     file_size: int
     feature_status: dict
+    asset_type: AssetType
+    parse_status: ParseStatus
+    source_dataset: str | None = None
+    source_relpath: str | None = None
     created_at: datetime
     tags: list[TagOut] = []

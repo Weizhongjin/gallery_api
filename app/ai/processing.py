@@ -62,6 +62,12 @@ def classify_asset(db: Session, asset: Asset, vlm_client: VLMClient, storage) ->
     status["classify"] = "done"
     asset.feature_status = status
     db.flush()
+    try:
+        from app.products.service import rebuild_product_tags_for_asset
+        rebuild_product_tags_for_asset(db, asset.id)
+    except Exception:
+        # Tag aggregation should not break classify main path.
+        pass
 
 
 def embed_asset(db: Session, asset: Asset, embed_client: EmbeddingClient, storage, model_ver: str = "v1") -> None:

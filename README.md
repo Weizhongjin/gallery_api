@@ -15,12 +15,20 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 
 - 资产上传与批量导入（支持按对象存储前缀批量 ingestion）
 - 图片三种衍生版本管理（original / display / thumb）
+- 资产类型识别（`advertising / flatlay / model_set / unknown`）
+- 商品主数据（`product`）与资产多对多绑定（`asset_product`）
+- 商品统一标签（`product_tag`，由图片标签聚合）
 - Taxonomy 多维标签体系（category/style/color/scene/detail）
 - AI 自动打标 + 人工打标并存（`source=ai|human`）
 - 未命中标签沉淀到 `taxonomy_candidate` 供人工审核提升
 - 向量检索（text/image -> pgvector cosine search）
 - Lookbook 发布与访问授权（buyer 侧只读访问）
 - 任务进度查询（批处理 job）
+
+## 运行规范
+
+- 图片导入运行规范：[`docs/INGESTION_OPERATING_MODEL.md`](docs/INGESTION_OPERATING_MODEL.md)
+- 原始数据存放规范：[`docs/RAW_DATA_SPEC.md`](docs/RAW_DATA_SPEC.md)
 
 ## 目录结构
 
@@ -126,9 +134,23 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `POST /assets/batch-ingest/storage`
 - `GET /assets`
 - `GET /assets/{asset_id}`
+- `GET /assets/{asset_id}/products`
+- `POST /assets/{asset_id}/products/bind`
+- `DELETE /assets/{asset_id}/products/{product_code}`
 - `PATCH /assets/{asset_id}/tags`
 - `POST /assets/{asset_id}/process`
 - `POST /assets/reprocess`
+
+### Products
+- `POST /products/upsert`
+- `GET /products`
+- `GET /products/{product_id}`
+- `PATCH /products/{product_id}`
+- `GET /products/{product_id}/assets`
+- `GET /products/{product_id}/tags`
+- `PATCH /products/{product_id}/tags`
+- `POST /products/{product_id}/tags/rebuild`
+- `GET /products/admin/unresolved-assets`
 
 ### Taxonomy
 - `GET /taxonomy`
@@ -155,6 +177,9 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 ## 数据模型（核心表）
 
 - `asset`: 图片主记录与特征状态
+- `product`: 商品主记录（价格等业务字段）
+- `asset_product`: 资产-商品多对多关系
+- `product_tag`: 商品层统一标签（human/aggregated）
 - `image_group`: 资产分组
 - `taxonomy_node`: 标签树节点
 - `taxonomy_candidate`: AI 未命中候选标签

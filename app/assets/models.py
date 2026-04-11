@@ -12,6 +12,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+class AssetType(str, enum.Enum):
+    advertising = "advertising"
+    flatlay = "flatlay"
+    model_set = "model_set"
+    unknown = "unknown"
+
+
+class ParseStatus(str, enum.Enum):
+    parsed = "parsed"
+    unresolved = "unresolved"
+
+
 class ImageGroup(Base):
     __tablename__ = "image_group"
 
@@ -38,10 +50,23 @@ class Asset(Base):
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     feature_status: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    asset_type: Mapped[AssetType] = mapped_column(
+        Enum(AssetType, name="assettype"),
+        nullable=False,
+        default=AssetType.unknown,
+        server_default=AssetType.unknown.value,
+    )
+    source_dataset: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_relpath: Mapped[str | None] = mapped_column(String, nullable=True)
+    parse_status: Mapped[ParseStatus] = mapped_column(
+        Enum(ParseStatus, name="parsestatus"),
+        nullable=False,
+        default=ParseStatus.unresolved,
+        server_default=ParseStatus.unresolved.value,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-
 
 class DimensionEnum(str, enum.Enum):
     category = "category"
@@ -110,6 +135,77 @@ class AssetEmbedding(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     # vector column added via raw SQL in migration (pgvector)
+
+
+class AssetProductRole(str, enum.Enum):
+    flatlay_primary = "flatlay_primary"
+    advertising_ref = "advertising_ref"
+    model_ref = "model_ref"
+    manual = "manual"
+
+
+class ProductTagSource(str, enum.Enum):
+    aggregated = "aggregated"
+    human = "human"
+
+
+class Product(Base):
+    __tablename__ = "product"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    list_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sale_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str] = mapped_column(String, nullable=False, default="CNY", server_default="CNY")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AssetProduct(Base):
+    __tablename__ = "asset_product"
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset.id"), primary_key=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), primary_key=True
+    )
+    relation_role: Mapped[AssetProductRole] = mapped_column(
+        Enum(AssetProductRole, name="assetproductrole"),
+        nullable=False,
+        default=AssetProductRole.manual,
+        server_default=AssetProductRole.manual.value,
+    )
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ProductTag(Base):
+    __tablename__ = "product_tag"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), primary_key=True
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("taxonomy_node.id"), primary_key=True
+    )
+    source: Mapped[ProductTagSource] = mapped_column(
+        Enum(ProductTagSource, name="producttagsource"),
+        nullable=False,
+        primary_key=True,
+    )
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class Lookbook(Base):
