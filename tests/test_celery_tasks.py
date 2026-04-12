@@ -66,3 +66,31 @@ def test_run_reprocess_uses_celery_when_mode_set(db, sample_asset):
         run_reprocess_job(db, job.id, ["classify"], async_mode="celery")
 
     mock_task.delay.assert_called_once_with(str(job.id), ["classify"])
+
+
+def test_batch_ingest_uses_celery_when_mode_set(db):
+    """batch_ingest_from_storage dispatches Celery task when async_mode=celery."""
+    from app.assets.service import batch_ingest_from_storage
+
+    mock_background = MagicMock()
+    mock_storage = MagicMock()
+    mock_storage.list_objects.return_value = ["images/25冬单品平铺图/A12345678.jpg"]
+
+    with patch("app.assets.service.get_storage", return_value=mock_storage):
+        with patch("app.ai.tasks.celery_ingest_storage_batch") as mock_task:
+            mock_task.delay = MagicMock()
+            job = batch_ingest_from_storage(
+                db,
+                prefix="images/",
+                stages=["classify"],
+                background_tasks=mock_background,
+                async_mode="celery",
+            )
+
+    mock_task.delay.assert_called_once_with(
+        str(job.id),
+        ["images/25冬单品平铺图/A12345678.jpg"],
+        "images/",
+        ["classify"],
+    )
+    mock_background.add_task.assert_not_called()

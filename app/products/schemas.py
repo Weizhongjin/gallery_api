@@ -34,6 +34,13 @@ class ProductOut(BaseModel):
     updated_at: datetime
 
 
+class ProductPageOut(BaseModel):
+    items: list[ProductOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class ProductAssetOut(BaseModel):
     asset_id: uuid.UUID
     filename: str

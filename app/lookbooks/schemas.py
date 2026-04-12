@@ -19,6 +19,14 @@ class LookbookItemIn(BaseModel):
     note: str | None = None
 
 
+class LookbookItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    lookbook_id: uuid.UUID
+    asset_id: uuid.UUID
+    sort_order: int
+    note: str | None = None
+
+
 class LookbookOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID

@@ -90,6 +90,16 @@ def test_add_item_to_lookbook(client, editor_token, sample_asset):
     )
     assert response.status_code == 201
 
+    list_resp = client.get(
+        f"/lookbooks/{lb_id}/items",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert list_resp.status_code == 200
+    items = list_resp.json()
+    assert len(items) == 1
+    assert items[0]["asset_id"] == str(sample_asset.id)
+    assert items[0]["sort_order"] == 1
+
 
 def test_publish_lookbook(client, editor_token):
     lb = client.post(

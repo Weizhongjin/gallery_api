@@ -67,12 +67,14 @@ def image_vector_search(
 ):
     data = file.file.read()
     variants = process_image(data)
-    storage = get_storage()
-    key = f"search-tmp/{uuid.uuid4()}.jpg"
-    storage.upload(key, variants.display, "image/jpeg")
-    presigned = storage.get_presigned_url(key)
-
     embed_client = get_embedding_client()
-    vec = embed_client.embed_image(presigned)
+    if getattr(embed_client, "provider", "") == "dashscope":
+        vec = embed_client.embed_image_bytes(variants.display, "image/jpeg")
+    else:
+        storage = get_storage()
+        key = f"search-tmp/{uuid.uuid4()}.jpg"
+        storage.upload(key, variants.display, "image/jpeg")
+        presigned = storage.get_presigned_url(key)
+        vec = embed_client.embed_image(presigned)
     rows = vector_search(db, vec, limit=50)
     return [_row_to_result(r) for r in rows]

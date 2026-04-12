@@ -12,10 +12,12 @@ from collections import Counter
 from sqlalchemy import text
 
 from app.assets.models import Asset, AssetProduct, AssetProductRole, AssetType, ParseStatus, Product
+from app.assets.service import _build_group_tempuid
 from app.database import SessionLocal
 from app.products.service import rebuild_product_tags_for_product
 
 TOKEN_RE = re.compile(r"(?:[A-Z]\d{5,}[A-Z]?|\d{8}[A-Z]?)", re.IGNORECASE)
+SINGLE_DIGIT_RE = re.compile(r"^\d$")
 
 
 def extract_codes(text: str) -> list[str]:
@@ -51,8 +53,12 @@ def infer_from_relpath(rel: str) -> tuple[AssetType, str | None, ParseStatus, li
     if asset_type == AssetType.flatlay:
         codes = extract_codes(stem)
     elif asset_type == AssetType.advertising:
+        category = parts[1] if len(parts) >= 3 else ""
         folder = parts[2] if len(parts) >= 4 else ""
-        codes = extract_codes(folder)
+        if category == "套装" and SINGLE_DIGIT_RE.fullmatch(folder):
+            codes = [_build_group_tempuid(dataset, category, folder)]
+        else:
+            codes = extract_codes(folder)
     elif asset_type == AssetType.model_set:
         folder = parts[1] if len(parts) >= 3 else ""
         codes = extract_codes(folder)

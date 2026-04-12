@@ -140,3 +140,22 @@ def test_dashscope_embed_text_returns_vector():
     assert kwargs["enable_fusion"] is False
     assert kwargs["dimension"] == 768
     assert kwargs["input"] == [{"text": "测试文本"}]
+
+
+def test_dashscope_embed_image_bytes_uses_data_url():
+    client = EmbeddingClient(
+        endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3-vl-embedding",
+        provider="dashscope",
+        api_key="sk-test",
+    )
+    fake_resp = MagicMock(output={"embeddings": [{"embedding": [0.8, 0.9]}]})
+
+    with patch("dashscope.MultiModalEmbedding.call") as mock_call:
+        mock_call.return_value = fake_resp
+        vec = client.embed_image_bytes(b"\xff\xd8\xff", "image/jpeg")
+
+    assert vec == [0.8, 0.9]
+    input_payload = mock_call.call_args.kwargs["input"]
+    assert isinstance(input_payload, list) and len(input_payload) == 1
+    assert input_payload[0]["image"].startswith("data:image/jpeg;base64,")

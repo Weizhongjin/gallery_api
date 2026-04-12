@@ -1,4 +1,4 @@
-# Gallery API
+# Gallery API（定版）
 
 Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 - 内部：资产管理与 AI 治理中台（导入、打标、检索、重处理）
@@ -10,6 +10,14 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 - MinIO / S3 / TOS（对象存储）
 - Redis + Celery（可选异步）
 - VLM + Embedding（HTTP 调用外部模型服务）
+
+## 当前定版信息
+
+- 定版日期：2026-04-12
+- API 文档入口：
+  - Swagger UI：`http://127.0.0.1:8000/docs`
+  - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
+  - 中文接口文档：[`docs/API接口文档.md`](docs/API接口文档.md)
 
 ## 主要能力
 
@@ -29,6 +37,7 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 
 - 图片导入运行规范：[`docs/INGESTION_OPERATING_MODEL.md`](docs/INGESTION_OPERATING_MODEL.md)
 - 原始数据存放规范：[`docs/RAW_DATA_SPEC.md`](docs/RAW_DATA_SPEC.md)
+- unresolved 占位 UID 规范：[`docs/UNRESOLVED_PLACEHOLDER_UID_POLICY.md`](docs/UNRESOLVED_PLACEHOLDER_UID_POLICY.md)
 
 ## 目录结构
 
@@ -77,6 +86,7 @@ cp .env.example .env
 - `VLM_*`
 - `EMBED_*`
 - `ASYNC_MODE`（`background` 或 `celery`）
+- `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`（`ASYNC_MODE=celery` 时）
 
 ### 3) 启动基础设施
 
@@ -106,6 +116,19 @@ uvicorn app.main:app --reload
 
 ```bash
 curl http://127.0.0.1:8000/health
+```
+
+### 6) 启动 Celery Worker（可选）
+
+当 `ASYNC_MODE=celery` 时，以下接口会把任务投递到 Redis/Celery worker：
+- `POST /assets/{asset_id}/process`
+- `POST /assets/reprocess`
+- `POST /assets/batch-ingest/storage`
+
+启动命令：
+
+```bash
+celery -A app.celery_app.celery_app worker --loglevel=INFO
 ```
 
 ## 常用命令
@@ -173,6 +196,55 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 
 ### Jobs
 - `GET /jobs/{job_id}`
+
+## 同步/异步调用约定
+
+接口分为两类：
+
+- 同步接口：直接返回业务结果（通常 `200/201`）
+- 异步接口：返回任务受理结果（`202 + job_id`），随后轮询 `GET /jobs/{job_id}`
+
+当前异步接口（建议前端统一按 job 处理）：
+
+- `POST /assets/{asset_id}/process`
+- `POST /assets/reprocess`
+- `POST /assets/batch-ingest/storage`
+
+异步接口返回示例：
+
+```json
+{
+  "job_id": "9f58e6d6-fdc1-487f-9fdb-2b2ea32934af",
+  "stages": ["classify", "embed"]
+}
+```
+
+`GET /jobs/{job_id}` 返回示例：
+
+```json
+{
+  "id": "9f58e6d6-fdc1-487f-9fdb-2b2ea32934af",
+  "status": "running",
+  "stages": ["classify", "embed"],
+  "total": 2340,
+  "processed": 1200,
+  "failed_count": 8,
+  "completed": 1208,
+  "remaining": 1132,
+  "progress_pct": 51.62,
+  "elapsed_seconds": 942,
+  "throughput_items_per_min": 76.93,
+  "eta_seconds": 883
+}
+```
+
+字段说明：
+
+- `status`: `pending | running | done | failed`
+- `completed`: `processed + failed_count`
+- `progress_pct`: 进度百分比（0-100）
+- `throughput_items_per_min`: 当前平均处理速率（每分钟）
+- `eta_seconds`: 预计剩余秒数（无法估算时为 `null`）
 
 ## 数据模型（核心表）
 

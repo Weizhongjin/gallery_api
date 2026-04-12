@@ -122,3 +122,18 @@ def test_embed_asset_writes_embedding(db, sample_asset):
 
     db.refresh(sample_asset)
     assert sample_asset.feature_status["embed"] == "done"
+
+
+def test_embed_asset_dashscope_uses_storage_bytes(db, sample_asset):
+    from app.ai.processing import embed_asset
+
+    mock_embed = MagicMock()
+    mock_embed.provider = "dashscope"
+    mock_embed.embed_image_bytes.return_value = [0.1] * 768
+    mock_storage = MagicMock()
+    mock_storage.get_object.return_value = b"\xff\xd8\xff"
+
+    embed_asset(db, sample_asset, embed_client=mock_embed, storage=mock_storage, model_ver="v1")
+
+    mock_storage.get_object.assert_called_once()
+    mock_embed.embed_image_bytes.assert_called_once()

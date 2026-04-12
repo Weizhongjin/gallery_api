@@ -77,3 +77,30 @@ def test_vector_search_from_image_upload(client, viewer_token, asset_with_embedd
     assert response.status_code == 200
     results = response.json()
     assert isinstance(results, list)
+
+
+def test_vector_search_from_image_upload_dashscope_uses_image_bytes(client, viewer_token, asset_with_embedding):
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 100)).save(buf, format="JPEG")
+
+    class DashscopeEmbedStub:
+        provider = "dashscope"
+
+        def embed_image_bytes(self, image_bytes: bytes, mime_type: str = "image/jpeg"):
+            assert image_bytes
+            assert mime_type == "image/jpeg"
+            return [0.1] * 768
+
+    mock_storage = MagicMock()
+
+    with patch("app.search.router.get_embedding_client", return_value=DashscopeEmbedStub()), \
+         patch("app.search.router.get_storage", return_value=mock_storage):
+        response = client.post(
+            "/search/vector",
+            files={"file": ("query.jpg", buf.getvalue(), "image/jpeg")},
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+
+    assert response.status_code == 200
+    mock_storage.upload.assert_not_called()
+    mock_storage.get_presigned_url.assert_not_called()

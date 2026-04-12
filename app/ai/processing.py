@@ -80,8 +80,12 @@ def embed_asset(db: Session, asset: Asset, embed_client: EmbeddingClient, storag
         )
 
     key = uri_to_key(asset.display_uri)
-    image_url = storage.get_presigned_url(key)
-    vector = embed_client.embed_image(image_url=image_url)
+    if getattr(embed_client, "provider", "") == "dashscope":
+        image_bytes = storage.get_object(key)
+        vector = embed_client.embed_image_bytes(image_bytes, "image/jpeg")
+    else:
+        image_url = storage.get_presigned_url(key)
+        vector = embed_client.embed_image(image_url=image_url)
 
     existing = db.query(AssetEmbedding).filter(AssetEmbedding.asset_id == asset.id).first()
     vector_str = "[" + ",".join(str(x) for x in vector) + "]"

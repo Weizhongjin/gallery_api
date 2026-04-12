@@ -5,7 +5,15 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user, require_role
 from app.auth.models import User, UserRole
 from app.database import get_db
-from app.lookbooks.schemas import AccessIn, AccessOut, LookbookCreate, LookbookItemIn, LookbookOut, LookbookUpdate
+from app.lookbooks.schemas import (
+    AccessIn,
+    AccessOut,
+    LookbookCreate,
+    LookbookItemIn,
+    LookbookItemOut,
+    LookbookOut,
+    LookbookUpdate,
+)
 from app.lookbooks.service import (
     add_item, create_lookbook, get_buyer_lookbooks, get_lookbook_items,
     grant_access, list_access, list_lookbooks, remove_item, revoke_access, set_published, update_lookbook,
@@ -51,6 +59,15 @@ def add(
 ):
     add_item(db, lb_id, body.asset_id, body.sort_order, body.note)
     return {"ok": True}
+
+
+@router.get("/lookbooks/{lb_id}/items", response_model=list[LookbookItemOut])
+def list_items(
+    lb_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(*_EDITORS)),
+):
+    return get_lookbook_items(db, lb_id)
 
 
 @router.delete("/lookbooks/{lb_id}/items/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

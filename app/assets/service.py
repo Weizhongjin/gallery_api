@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +19,8 @@ from app.storage import get_storage
 
 _GROUP_CODE_RE = re.compile(r"^[A-Za-z]\d{3,}[A-Za-z0-9_-]*$")
 _PRODUCT_TOKEN_RE = re.compile(r"(?:[A-Z]\d{5,}[A-Z]?|\d{8}[A-Z]?)", re.IGNORECASE)
+_SINGLE_DIGIT_FOLDER_RE = re.compile(r"^\d$")
+_FILENAME_CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{2,}$", re.IGNORECASE)
 
 
 def _derive_group_from_key(key: str, fallback_prefix: str) -> tuple[str, str]:
@@ -65,6 +68,24 @@ def _extract_product_codes(text: str) -> list[str]:
     return out
 
 
+def _build_group_tempuid(dataset: str, category: str, folder: str) -> str:
+    seed = f"{dataset}/{category}/{folder}".encode("utf-8")
+    digest = hashlib.md5(seed).hexdigest()[:8].upper()
+    return f"TMPUID-GRP-{folder}-{digest}"
+
+
+def _fallback_code_from_name(name: str) -> str | None:
+    token = (name or "").strip().upper()
+    if not token:
+        return None
+    if not _FILENAME_CODE_RE.fullmatch(token):
+        return None
+    # Avoid tiny pure-number camera indices like 1/2/12.
+    if token.isdigit() and len(token) < 5:
+        return None
+    return token
+
+
 def _infer_asset_type(dataset: str) -> AssetType:
     ds = (dataset or "").strip()
     if "广告" in ds:
@@ -98,21 +119,45 @@ def _infer_from_storage_key(key: str, prefix: str) -> tuple[AssetType, str | Non
     product_codes: list[str] = []
     if asset_type == AssetType.flatlay:
         product_codes = _extract_product_codes(stem)
+        if not product_codes:
+            fallback = _fallback_code_from_name(stem)
+            if fallback:
+                product_codes = [fallback]
     elif asset_type == AssetType.advertising:
         # Expected: dataset/category/product-folder/image.jpg
+        category = parts[1] if len(parts) >= 3 else ""
         product_folder = parts[2] if len(parts) >= 4 else ""
-        product_codes = _extract_product_codes(product_folder)
+        if category == "套装" and _SINGLE_DIGIT_FOLDER_RE.fullmatch(product_folder):
+            product_codes = [_build_group_tempuid(dataset, category, product_folder)]
+        else:
+            product_codes = _extract_product_codes(product_folder)
+            if not product_codes:
+                fallback = _fallback_code_from_name(product_folder)
+                if fallback:
+                    product_codes = [fallback]
     elif asset_type == AssetType.model_set:
         # Expected: dataset/product-folder/image.jpg
         product_folder = parts[1] if len(parts) >= 3 else ""
         product_codes = _extract_product_codes(product_folder)
         if not product_codes:
+            fallback_folder = _fallback_code_from_name(product_folder)
+            if fallback_folder:
+                product_codes = [fallback_folder]
+        if not product_codes:
             product_codes = _extract_product_codes(stem)
+        if not product_codes:
+            fallback_stem = _fallback_code_from_name(stem)
+            if fallback_stem:
+                product_codes = [fallback_stem]
     else:
         # Fallback for unknown datasets: parse from filename and parent dir.
         product_codes = _extract_product_codes(stem)
         if not product_codes and len(parts) >= 2:
             product_codes = _extract_product_codes(parts[-2])
+        if not product_codes:
+            fallback = _fallback_code_from_name(stem)
+            if fallback:
+                product_codes = [fallback]
 
     parse_status = ParseStatus.parsed if product_codes else ParseStatus.unresolved
     return asset_type, dataset, rel or None, parse_status, product_codes
@@ -395,7 +440,7 @@ def create_reprocess_job(db: Session, stages: list[str]):
     total = db.query(Asset).count()
     job = ProcessingJob(id=_uuid.uuid4(), stages=stages, total=total, status="pending")
     db.add(job)
-    db.flush()
+    db.commit()
     db.refresh(job)
     return job
 
@@ -443,11 +488,33 @@ def run_reprocess_job(db: Session, job_id, stages: list[str], async_mode: str = 
 
     job.status = JobStatus.done
     db.flush()
+    db.commit()
 
 
-def batch_ingest_from_storage(db: Session, prefix: str, stages: list[str], background_tasks) -> "ProcessingJob":
+def run_reprocess_job_standalone(job_id: str, stages: list[str]) -> None:
+    """Background entrypoint that owns its DB session."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        run_reprocess_job(db, _uuid.UUID(job_id), stages, async_mode="background")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def batch_ingest_from_storage(
+    db: Session,
+    prefix: str,
+    stages: list[str],
+    background_tasks,
+    async_mode: str | None = None,
+) -> "ProcessingJob":
     """List S3 objects with prefix, create a ProcessingJob, queue background ingest."""
     from app.assets.models import ProcessingJob
+    from app.config import settings
 
     storage = get_storage()
     keys = storage.list_objects(prefix)
@@ -457,11 +524,38 @@ def batch_ingest_from_storage(db: Session, prefix: str, stages: list[str], backg
 
     job = ProcessingJob(stages=stages, total=len(image_keys), status="pending")
     db.add(job)
-    db.flush()
+    db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(_ingest_storage_batch, db, job.id, image_keys, prefix, stages)
+    mode = async_mode or settings.async_mode
+    if mode == "celery":
+        from app.ai.tasks import celery_ingest_storage_batch
+
+        celery_ingest_storage_batch.delay(str(job.id), image_keys, prefix, stages)
+    else:
+        background_tasks.add_task(_ingest_storage_batch_standalone, str(job.id), image_keys, prefix, stages)
+
     return job
+
+
+def _ingest_storage_batch_standalone(job_id: str, keys: list[str], prefix: str, stages: list[str]) -> None:
+    """Background entrypoint that owns its DB session."""
+    from app.database import SessionLocal
+    from app.assets.models import ProcessingJob, JobStatus
+
+    db = SessionLocal()
+    try:
+        _ingest_storage_batch(db, _uuid.UUID(job_id), keys, prefix, stages)
+        db.commit()
+    except Exception:
+        db.rollback()
+        job = db.get(ProcessingJob, _uuid.UUID(job_id))
+        if job:
+            job.status = JobStatus.failed
+            db.commit()
+        raise
+    finally:
+        db.close()
 
 
 def _ingest_storage_batch(db: Session, job_id, keys: list[str], prefix: str, stages: list[str]) -> None:

@@ -1,6 +1,7 @@
 import uuid
 from collections import defaultdict
 
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
@@ -67,19 +68,59 @@ def list_products(
     db: Session,
     *,
     q: str | None = None,
+    tag_ids: list[uuid.UUID] | None = None,
     page: int = 1,
     page_size: int = 50,
-) -> list[Product]:
+) -> tuple[list[Product], int]:
     query = db.query(Product)
     if q:
         key = f"%{q.strip().upper()}%"
-        query = query.filter(Product.product_code.ilike(key))
-    return (
-        query.order_by(Product.created_at.desc())
+        query = query.filter(
+            Product.product_code.ilike(key) | Product.name.ilike(key)
+        )
+
+    if tag_ids:
+        unique_ids = list(dict.fromkeys(tag_ids))
+        rows = (
+            db.query(TaxonomyNode.id, TaxonomyNode.dimension)
+            .filter(TaxonomyNode.id.in_(unique_ids))
+            .all()
+        )
+        if not rows:
+            return [], 0
+
+        ids_by_dimension: dict[DimensionEnum, list[uuid.UUID]] = defaultdict(list)
+        for node_id, dimension in rows:
+            ids_by_dimension[dimension].append(node_id)
+
+        for ids_in_dim in ids_by_dimension.values():
+            matched_products_by_product_tag = (
+                db.query(ProductTag.product_id)
+                .filter(ProductTag.node_id.in_(ids_in_dim))
+                .scalar_subquery()
+            )
+            matched_products_by_asset_tag = (
+                db.query(AssetProduct.product_id)
+                .join(AssetTag, AssetTag.asset_id == AssetProduct.asset_id)
+                .filter(AssetTag.node_id.in_(ids_in_dim))
+                .scalar_subquery()
+            )
+            query = query.filter(
+                or_(
+                    Product.id.in_(matched_products_by_product_tag),
+                    Product.id.in_(matched_products_by_asset_tag),
+                )
+            )
+
+    tmpuid_last = case((Product.product_code.ilike("TMPUID-%"), 1), else_=0)
+    total = query.count()
+    items = (
+        query.order_by(tmpuid_last.asc(), Product.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
+    return items, total
 
 
 def patch_product(db: Session, product_id: uuid.UUID, **fields) -> Product | None:

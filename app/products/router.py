@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.assets.models import Product
@@ -9,6 +9,7 @@ from app.auth.models import User, UserRole
 from app.database import get_db
 from app.products.schemas import (
     ProductAssetOut,
+    ProductPageOut,
     ProductOut,
     ProductPatchIn,
     ProductTagOut,
@@ -45,15 +46,17 @@ def upsert(
     )
 
 
-@router.get("", response_model=list[ProductOut])
+@router.get("", response_model=ProductPageOut)
 def list_all(
     q: str | None = None,
+    tag_ids: list[uuid.UUID] = Query(default=[]),
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return list_products(db, q=q, page=page, page_size=page_size)
+    items, total = list_products(db, q=q, tag_ids=tag_ids, page=page, page_size=page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{product_id}", response_model=ProductOut)

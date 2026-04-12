@@ -1,4 +1,7 @@
 import os
+import base64
+import ipaddress
+from urllib.parse import urlparse
 from typing import Any, Optional
 
 import httpx
@@ -20,6 +23,10 @@ class EmbeddingClient:
         self._provider = (provider or "infinity").strip().lower()
         self._api_key = api_key
         self._dimension = int(dimension or 0)
+
+    @property
+    def provider(self) -> str:
+        return self._provider
 
     # ---------- Infinity-compatible HTTP mode ----------
     def _embed_infinity(self, input_value: str, modality: str) -> list[float]:
@@ -91,9 +98,42 @@ class EmbeddingClient:
             )
         return self._extract_dashscope_embedding(output)
 
+    @staticmethod
+    def _looks_local_or_private_url(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").strip().lower()
+            if not host:
+                return False
+            if host in {"localhost"} or host.endswith(".local"):
+                return True
+            ip = ipaddress.ip_address(host)
+            return ip.is_private or ip.is_loopback or ip.is_link_local
+        except Exception:
+            return False
+
+    def embed_image_bytes(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> list[float]:
+        if not image_bytes:
+            raise ValueError("image_bytes is empty")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:{mime_type};base64,{b64}"
+        if self._provider == "dashscope":
+            return self._embed_dashscope(image_url=data_url)
+        return self._embed_infinity(data_url, "image")
+
     def embed_image(self, image_url: str) -> list[float]:
         """Embed an image via HTTPS URL."""
         if self._provider == "dashscope":
+            # DashScope cloud cannot access local/private presigned URLs.
+            if self._looks_local_or_private_url(image_url):
+                try:
+                    with httpx.Client(timeout=self._timeout) as client:
+                        resp = client.get(image_url)
+                        resp.raise_for_status()
+                    content_type = resp.headers.get("content-type", "image/jpeg").split(";", 1)[0].strip() or "image/jpeg"
+                    return self.embed_image_bytes(resp.content, content_type)
+                except Exception:
+                    pass
             return self._embed_dashscope(image_url=image_url)
         return self._embed_infinity(image_url, "image")
 

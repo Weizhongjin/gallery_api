@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import MagicMock, patch
 from app.auth.models import User, UserRole
@@ -40,17 +41,41 @@ def test_trigger_single_process(client, editor_token, sample_asset):
     assert data["stages"] == ["classify", "embed"]
 
 
-def test_reprocess_all_returns_job(client, editor_token, sample_asset):
+def test_reprocess_all_returns_job(client, editor_token, sample_asset, monkeypatch):
     """POST /assets/reprocess returns job_id."""
-    response = client.post(
-        "/assets/reprocess",
-        json={"stages": ["classify"]},
-        headers={"Authorization": f"Bearer {editor_token}"},
-    )
+    from app.assets import router as assets_router
+
+    monkeypatch.setattr(assets_router.settings, "async_mode", "background")
+    with patch("app.assets.router.run_reprocess_job_standalone") as mock_background_runner:
+        response = client.post(
+            "/assets/reprocess",
+            json={"stages": ["classify"]},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
     assert response.status_code == 202
     data = response.json()
     assert "job_id" in data
     assert data["stages"] == ["classify"]
+    mock_background_runner.assert_called_once()
+
+
+def test_reprocess_all_dispatches_celery_when_mode_set(client, editor_token, sample_asset, monkeypatch):
+    """POST /assets/reprocess dispatches Celery directly when async_mode=celery."""
+    from app.assets import router as assets_router
+
+    monkeypatch.setattr(assets_router.settings, "async_mode", "celery")
+    with patch("app.assets.router.run_reprocess_job") as mock_run_reprocess:
+        with patch("app.assets.router.run_reprocess_job_standalone") as mock_background_runner:
+            response = client.post(
+                "/assets/reprocess",
+                json={"stages": ["classify"]},
+                headers={"Authorization": f"Bearer {editor_token}"},
+            )
+
+    assert response.status_code == 202
+    assert mock_run_reprocess.call_count == 1
+    assert mock_run_reprocess.call_args.kwargs["async_mode"] == "celery"
+    mock_background_runner.assert_not_called()
 
 
 def test_get_job_status(client, editor_token, db):
@@ -62,6 +87,7 @@ def test_get_job_status(client, editor_token, db):
         total=10,
         processed=3,
         failed_count=0,
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=2),
     )
     db.add(job)
     db.flush()
@@ -75,3 +101,8 @@ def test_get_job_status(client, editor_token, db):
     assert data["status"] == "running"
     assert data["total"] == 10
     assert data["processed"] == 3
+    assert data["completed"] == 3
+    assert data["remaining"] == 7
+    assert data["progress_pct"] == 30.0
+    assert data["elapsed_seconds"] is not None
+    assert data["throughput_items_per_min"] is not None
