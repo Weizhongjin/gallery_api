@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.assets.models import DimensionEnum
+from app.assets.models import AssetType, DimensionEnum
 from app.auth.deps import get_current_user
 from app.auth.models import User
 from app.database import get_db
@@ -21,12 +21,13 @@ router = APIRouter(prefix="/search", tags=["search"])
 def search(
     tag_ids: list[uuid.UUID] = Query(default=[]),
     dimension: Optional[DimensionEnum] = None,
+    asset_type: Optional[AssetType] = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return attribute_search(db, tag_ids, dimension, page, page_size)
+    return attribute_search(db, tag_ids, dimension, page, page_size, asset_type=asset_type)
 
 
 class SemanticSearchRequest(BaseModel):

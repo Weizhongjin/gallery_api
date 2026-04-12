@@ -1,7 +1,7 @@
 import pytest
 from app.auth.models import User, UserRole
 from app.auth.service import hash_password, create_access_token
-from app.assets.models import Asset, AssetTag, DimensionEnum, TagSource, TaxonomyNode
+from app.assets.models import Asset, AssetTag, AssetType, DimensionEnum, TagSource, TaxonomyNode
 
 
 @pytest.fixture
@@ -67,3 +67,65 @@ def test_search_by_dimension(client, viewer_token, tagged_assets):
     response = client.get("/search?dimension=category", headers={"Authorization": f"Bearer {viewer_token}"})
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+@pytest.fixture
+def typed_assets(db):
+    """Two assets with different asset_type values, both tagged with same taxonomy node."""
+    node = TaxonomyNode(dimension=DimensionEnum.category, name="外套_类型筛选")
+    db.add(node)
+    db.flush()
+
+    adv = Asset(
+        original_uri="s3://b/adv.jpg", display_uri="s3://b/adv_d.jpg", thumb_uri="s3://b/adv_t.jpg",
+        filename="adv.jpg", width=100, height=100, file_size=100, feature_status={},
+        asset_type=AssetType.advertising,
+    )
+    flat = Asset(
+        original_uri="s3://b/flat.jpg", display_uri="s3://b/flat_d.jpg", thumb_uri="s3://b/flat_t.jpg",
+        filename="flat.jpg", width=100, height=100, file_size=100, feature_status={},
+        asset_type=AssetType.flatlay,
+    )
+    db.add_all([adv, flat])
+    db.flush()
+
+    db.add(AssetTag(asset_id=adv.id, node_id=node.id, source=TagSource.ai))
+    db.add(AssetTag(asset_id=flat.id, node_id=node.id, source=TagSource.ai))
+    db.flush()
+
+    return {"adv": adv, "flat": flat, "node": node}
+
+
+def test_search_filters_by_asset_type(client, viewer_token, typed_assets):
+    """Search with asset_type=advertising should only return advertising assets."""
+    node_id = str(typed_assets["node"].id)
+
+    # Without filter: both assets returned
+    resp_all = client.get(
+        f"/search?tag_ids={node_id}",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp_all.status_code == 200
+    assert len(resp_all.json()) == 2
+
+    # With asset_type=advertising: only the ad asset
+    resp_filtered = client.get(
+        f"/search?tag_ids={node_id}&asset_type=advertising",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp_filtered.status_code == 200
+    ids = [r["id"] for r in resp_filtered.json()]
+    assert str(typed_assets["adv"].id) in ids
+    assert str(typed_assets["flat"].id) not in ids
+
+
+def test_search_asset_type_without_tags(client, viewer_token, typed_assets):
+    """asset_type filter works even without tag_ids."""
+    resp = client.get(
+        "/search?asset_type=flatlay",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 200
+    ids = [r["id"] for r in resp.json()]
+    assert str(typed_assets["flat"].id) in ids
+    assert str(typed_assets["adv"].id) not in ids

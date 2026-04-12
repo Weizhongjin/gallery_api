@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
-from app.assets.models import Asset, AssetTag, DimensionEnum, TaxonomyNode
+from app.assets.models import Asset, AssetTag, AssetType, DimensionEnum, TaxonomyNode
 
 
 def attribute_search(
@@ -11,8 +11,12 @@ def attribute_search(
     dimension: DimensionEnum | None,
     page: int,
     page_size: int,
+    asset_type: AssetType | None = None,
 ) -> list[Asset]:
     query = db.query(Asset)
+
+    if asset_type:
+        query = query.filter(Asset.asset_type == asset_type)
 
     if dimension:
         dim_node_ids = db.query(TaxonomyNode.id).filter(TaxonomyNode.dimension == dimension).scalar_subquery()
