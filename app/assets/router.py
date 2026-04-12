@@ -1,6 +1,7 @@
+import mimetypes
 import uuid
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -8,12 +9,14 @@ from app.assets.models import Asset, AssetType, AssetProductRole, ProcessingJob
 from app.assets.schemas import AssetOut, AssetTagPatch, AssetWithTags, TagOut
 from app.assets.service import (
     batch_ingest_from_storage, create_reprocess_job, get_asset_tags, list_assets_filtered,
-    patch_human_tags, run_reprocess_job, trigger_asset_processing, upload_asset,
+    patch_human_tags, run_reprocess_job, run_reprocess_job_standalone, trigger_asset_processing, upload_asset,
     bind_asset_to_product, unbind_asset_product, list_asset_products,
 )
-from app.auth.deps import get_current_user, require_role
+from app.auth.deps import get_current_user, get_current_user_with_query_token, require_role
 from app.auth.models import User, UserRole
+from app.config import settings
 from app.database import get_db
+from app.storage import get_storage, uri_to_key
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -55,7 +58,10 @@ def reprocess_all(
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
     job = create_reprocess_job(db, body.stages)
-    background_tasks.add_task(run_reprocess_job, db, job.id, body.stages)
+    if settings.async_mode == "celery":
+        run_reprocess_job(db, job.id, body.stages, async_mode="celery")
+    else:
+        background_tasks.add_task(run_reprocess_job_standalone, str(job.id), body.stages)
     return {"job_id": str(job.id), "stages": body.stages, "total": job.total}
 
 
@@ -102,6 +108,38 @@ def get_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset
+
+
+@router.get("/{asset_id}/file")
+def get_asset_file(
+    asset_id: uuid.UUID,
+    kind: str = Query(default="thumb", pattern="^(thumb|display|original)$"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user_with_query_token),
+):
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    uri_map = {
+        "thumb": asset.thumb_uri,
+        "display": asset.display_uri,
+        "original": asset.original_uri,
+    }
+    uri = uri_map.get(kind, "")
+    if not uri:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Requested variant '{kind}' is not available for this asset",
+        )
+    try:
+        key = uri_to_key(uri)
+        content = get_storage().get_object(key)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to read asset object")
+
+    media_type = mimetypes.guess_type(asset.filename)[0] or "application/octet-stream"
+    return Response(content=content, media_type=media_type)
 
 
 @router.patch("/{asset_id}/tags", response_model=AssetWithTags)
