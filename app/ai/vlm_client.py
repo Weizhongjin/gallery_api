@@ -1,5 +1,6 @@
 import json
 import os
+import base64
 
 from openai import OpenAI
 
@@ -45,19 +46,27 @@ class VLMClient:
             timeout=self._timeout,
         )
 
-    def classify(self, image_url: str) -> dict:
-        """Call VLM with image URL, return parsed classification dict.
+    def classify(self, image_url: str = "", image_bytes: bytes | None = None, content_type: str = "image/jpeg") -> dict:
+        """Call VLM with image URL or raw image bytes, return parsed classification dict.
 
         Returns dict with keys: category, style, color, scene, detail.
         Raises ValueError if VLM response is not valid JSON.
         Raises httpx.HTTPError on network/HTTP failures.
         """
+        if image_bytes is not None:
+            b64 = base64.b64encode(image_bytes).decode("utf-8")
+            img_ref = f"data:{content_type};base64,{b64}"
+        elif image_url:
+            img_ref = image_url
+        else:
+            raise ValueError("Either image_url or image_bytes must be provided")
+
         payload = {
             "model": self._model,
             "messages": [{
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "image_url", "image_url": {"url": img_ref}},
                     {"type": "text", "text": _CLASSIFY_PROMPT},
                 ],
             }],

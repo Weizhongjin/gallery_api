@@ -25,9 +25,14 @@ def classify_asset(db: Session, asset: Asset, vlm_client: VLMClient, storage) ->
     Human tags (source=human) are never touched.
     """
     key = uri_to_key(asset.display_uri)
-    image_url = storage.get_presigned_url(key)
-
-    result = vlm_client.classify(image_url=image_url)
+    # DashScope cannot access localhost MinIO presigned URLs from the cloud side.
+    # Use image bytes for classification in that case.
+    if "dashscope" in (getattr(vlm_client, "_endpoint", "") or "").lower():
+        image_bytes = storage.get_object(key)
+        result = vlm_client.classify(image_bytes=image_bytes, content_type="image/jpeg")
+    else:
+        image_url = storage.get_presigned_url(key)
+        result = vlm_client.classify(image_url=image_url)
 
     # Clear existing ai tags
     db.query(AssetTag).filter(
