@@ -13,7 +13,7 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 
 ## 当前定版信息
 
-- 定版日期：2026-04-12
+- 定版日期：2026-04-13
 - API 文档入口：
   - Swagger UI：`http://127.0.0.1:8000/docs`
   - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
@@ -187,6 +187,33 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `GET /search`
 - `POST /search/semantic`
 - `POST /search/vector`
+- `GET /search/products`
+- `POST /search/products/semantic`
+- `POST /search/products/vector`
+
+### 商品维度检索（新增）
+
+检索默认基础单元仍是 `asset`，但新增了商品维度聚合接口，适配运营端商品检索体验：
+
+- `GET /search/products`
+  - 入参与 `GET /search` 一致：`tag_ids[] / dimension / asset_type / page / page_size`
+  - 出参按 `product` 聚合，返回商品码、封面图、匹配原因、匹配图片数
+- `POST /search/products/semantic`
+  - 入参：`{ text, limit, page, page_size }`
+  - 先做向量召回，再按商品聚合
+- `POST /search/products/vector`
+  - 入参：图片文件（`multipart/form-data`），可选 `page/page_size/limit`
+  - 先做向量召回，再按商品聚合
+
+商品维度检索结果核心字段：
+
+- `product_id`
+- `product_code`
+- `name`
+- `score`
+- `match_reasons`（`attribute | semantic | vector`）
+- `cover_asset_id / cover_thumb_uri / cover_display_uri`
+- `matched_asset_count`
 
 ### Lookbooks
 - `POST /lookbooks`
