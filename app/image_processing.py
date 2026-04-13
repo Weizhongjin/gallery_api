@@ -1,7 +1,7 @@
 import io
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 @dataclass
@@ -14,6 +14,8 @@ class ImageVariants:
 
 def process_image(data: bytes) -> ImageVariants:
     img = Image.open(io.BytesIO(data))
+    # Normalize orientation from EXIF metadata into actual pixels.
+    img = ImageOps.exif_transpose(img)
     original_width, original_height = img.size
     if img.mode != "RGB":
         img = img.convert("RGB")

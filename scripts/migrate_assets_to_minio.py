@@ -12,7 +12,7 @@ from typing import Dict, Iterable, List, Tuple
 import boto3
 import psycopg2
 from botocore.client import Config
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
 
 def resize_to_jpeg(data: bytes, max_side: int) -> bytes:
     image = Image.open(io.BytesIO(data))
+    image = ImageOps.exif_transpose(image)
     if image.mode != "RGB":
         image = image.convert("RGB")
 

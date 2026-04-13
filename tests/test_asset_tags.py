@@ -94,3 +94,26 @@ def test_list_assets_filter_by_tag(client, editor_token, sample_asset, sample_no
     assert response.status_code == 200
     ids = [a["id"] for a in response.json()]
     assert str(sample_asset.id) in ids
+
+
+def test_get_asset_tags_readonly(client, editor_token, sample_asset, sample_node, db):
+    tag = AssetTag(asset_id=sample_asset.id, node_id=sample_node.id, source=TagSource.ai)
+    db.add(tag)
+    db.flush()
+
+    response = client.get(
+        f"/assets/{sample_asset.id}/tags",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, list)
+    assert any(t["node_id"] == str(sample_node.id) and t["source"] == "ai" for t in body)
+
+
+def test_get_asset_tags_not_found(client, editor_token):
+    response = client.get(
+        "/assets/00000000-0000-0000-0000-000000000000/tags",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 404

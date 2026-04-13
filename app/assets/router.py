@@ -172,6 +172,19 @@ def patch_tags(
     )
 
 
+@router.get("/{asset_id}/tags", response_model=list[TagOut])
+def get_tags(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    tags = get_asset_tags(db, asset_id)
+    return [TagOut(node_id=t.node_id, source=t.source, confidence=t.confidence) for t in tags]
+
+
 @router.post("/{asset_id}/process", status_code=202)
 def process_asset(
     asset_id: uuid.UUID,
