@@ -13,3 +13,25 @@ class SearchResult(BaseModel):
     width: int
     height: int
     created_at: datetime
+
+
+class ProductSearchItem(BaseModel):
+    product_id: uuid.UUID
+    product_code: str
+    name: str | None = None
+    score: float
+    match_reasons: list[str]
+    cover_asset_id: uuid.UUID | None = None
+    cover_filename: str | None = None
+    cover_thumb_uri: str | None = None
+    cover_display_uri: str | None = None
+    cover_width: int | None = None
+    cover_height: int | None = None
+    matched_asset_count: int = 0
+
+
+class ProductSearchPage(BaseModel):
+    items: list[ProductSearchItem]
+    total: int
+    page: int
+    page_size: int

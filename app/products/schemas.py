@@ -45,6 +45,11 @@ class ProductAssetOut(BaseModel):
     asset_id: uuid.UUID
     filename: str
     asset_type: AssetType
+    thumb_uri: str
+    display_uri: str
+    width: int
+    height: int
+    created_at: datetime
     relation_role: AssetProductRole
     source: str | None = None
     confidence: float | None = None
