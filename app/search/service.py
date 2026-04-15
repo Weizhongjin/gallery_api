@@ -137,6 +137,11 @@ def _aggregate_product_candidates(
     db: Session,
     candidates: list[AssetCandidate],
     *,
+    q: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int,
     page_size: int,
 ) -> tuple[list[dict], int]:
@@ -152,18 +157,36 @@ def _aggregate_product_candidates(
         reasons_by_asset.setdefault(cand.id, set()).add(cand.match_reason)
 
     asset_ids = list(best_by_asset.keys())
-    links = (
+    links_query = (
         db.query(
             AssetProduct.asset_id,
             AssetProduct.product_id,
             AssetProduct.relation_role,
             Product.product_code,
             Product.name,
+            Product.year,
+            Product.list_price,
+            Product.sale_price,
+            Product.currency,
         )
         .join(Product, Product.id == AssetProduct.product_id)
         .filter(AssetProduct.asset_id.in_(asset_ids))
-        .all()
     )
+    if q:
+        key = f"%{q.strip().upper()}%"
+        links_query = links_query.filter(
+            Product.product_code.ilike(key) | Product.name.ilike(key)
+        )
+    if year_from is not None:
+        links_query = links_query.filter(Product.year.isnot(None), Product.year >= year_from)
+    if year_to is not None:
+        links_query = links_query.filter(Product.year.isnot(None), Product.year <= year_to)
+    if list_price_min is not None:
+        links_query = links_query.filter(Product.list_price.isnot(None), Product.list_price >= list_price_min)
+    if list_price_max is not None:
+        links_query = links_query.filter(Product.list_price.isnot(None), Product.list_price <= list_price_max)
+
+    links = links_query.all()
 
     buckets: dict[uuid.UUID, dict] = {}
     for link in links:
@@ -177,6 +200,10 @@ def _aggregate_product_candidates(
                 "product_id": link.product_id,
                 "product_code": link.product_code,
                 "name": link.name,
+                "year": link.year,
+                "list_price": link.list_price,
+                "sale_price": link.sale_price,
+                "currency": link.currency,
                 "score": 0.0,
                 "match_reasons": set(),
                 "asset_matches": {},
@@ -209,6 +236,10 @@ def _aggregate_product_candidates(
                 "product_id": bucket["product_id"],
                 "product_code": bucket["product_code"],
                 "name": bucket["name"],
+                "year": bucket["year"],
+                "list_price": float(bucket["list_price"]) if bucket["list_price"] is not None else None,
+                "sale_price": float(bucket["sale_price"]) if bucket["sale_price"] is not None else None,
+                "currency": bucket["currency"],
                 "score": score,
                 "match_reasons": sorted(bucket["match_reasons"]),
                 "cover_asset_id": cover_candidate.id if cover_candidate else None,
@@ -234,6 +265,11 @@ def product_attribute_search(
     tag_ids: list[uuid.UUID],
     dimension: DimensionEnum | None,
     asset_type: AssetType | None,
+    q: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int,
     page_size: int,
     candidate_limit: int | None = None,
@@ -259,7 +295,17 @@ def product_attribute_search(
         )
         for idx, asset in enumerate(assets)
     ]
-    return _aggregate_product_candidates(db, candidates, page=page, page_size=page_size)
+    return _aggregate_product_candidates(
+        db,
+        candidates,
+        q=q,
+        year_from=year_from,
+        year_to=year_to,
+        list_price_min=list_price_min,
+        list_price_max=list_price_max,
+        page=page,
+        page_size=page_size,
+    )
 
 
 def product_vector_search(
@@ -267,10 +313,25 @@ def product_vector_search(
     *,
     query_vector: list[float],
     mode: str,
+    q: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int,
     page_size: int,
     candidate_limit: int,
 ) -> tuple[list[dict], int]:
     rows = vector_search(db, query_vector, candidate_limit)
     candidates = [_vector_row_to_candidate(row, reason=mode) for row in rows]
-    return _aggregate_product_candidates(db, candidates, page=page, page_size=page_size)
+    return _aggregate_product_candidates(
+        db,
+        candidates,
+        q=q,
+        year_from=year_from,
+        year_to=year_to,
+        list_price_min=list_price_min,
+        list_price_max=list_price_max,
+        page=page,
+        page_size=page_size,
+    )

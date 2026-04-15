@@ -62,11 +62,12 @@ def test_upsert_and_bind_product(client, admin_token, sample_asset, db):
 
     resp = client.post(
         "/products/upsert",
-        json={"product_code": "B120330", "list_price": 399.0, "currency": "CNY"},
+        json={"product_code": "B120330", "year": 2026, "list_price": 399.0, "currency": "CNY"},
         headers=headers,
     )
     assert resp.status_code == 201
     assert resp.json()["product_code"] == "B120330"
+    assert resp.json()["year"] == 2026
 
     bind = client.post(
         f"/assets/{sample_asset.id}/products/bind",
@@ -95,6 +96,22 @@ def test_list_products_returns_paged_payload(client, admin_token, db):
     assert body["page_size"] == 1
     assert body["total"] >= 2
     assert len(body["items"]) == 1
+
+
+def test_list_products_supports_year_and_price_range(client, admin_token, db):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    db.add(Product(product_code="B910001", year=2026, list_price=5200))
+    db.add(Product(product_code="B910002", year=2025, list_price=2200))
+    db.commit()
+
+    resp = client.get(
+        "/products?page=1&page_size=50&year_from=2026&list_price_min=5000",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    codes = {x["product_code"] for x in resp.json()["items"]}
+    assert "B910001" in codes
+    assert "B910002" not in codes
 
 
 def test_list_products_puts_tmpuid_last(client, admin_token, db):

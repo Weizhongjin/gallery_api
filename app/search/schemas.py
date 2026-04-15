@@ -19,6 +19,10 @@ class ProductSearchItem(BaseModel):
     product_id: uuid.UUID
     product_code: str
     name: str | None = None
+    year: int | None = None
+    list_price: float | None = None
+    sale_price: float | None = None
+    currency: str | None = None
     score: float
     match_reasons: list[str]
     cover_asset_id: uuid.UUID | None = None

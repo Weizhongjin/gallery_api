@@ -9,6 +9,7 @@ from app.assets.models import AssetProductRole, AssetType, ProductTagSource
 class ProductUpsertIn(BaseModel):
     product_code: str
     name: str | None = None
+    year: int | None = None
     list_price: float | None = None
     sale_price: float | None = None
     currency: str = "CNY"
@@ -16,6 +17,7 @@ class ProductUpsertIn(BaseModel):
 
 class ProductPatchIn(BaseModel):
     name: str | None = None
+    year: int | None = None
     list_price: float | None = None
     sale_price: float | None = None
     currency: str | None = None
@@ -27,6 +29,7 @@ class ProductOut(BaseModel):
     id: uuid.UUID
     product_code: str
     name: str | None = None
+    year: int | None = None
     list_price: float | None = None
     sale_price: float | None = None
     currency: str

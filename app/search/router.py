@@ -45,6 +45,11 @@ class ProductSemanticSearchRequest(BaseModel):
     limit: int = 300
     page: int = 1
     page_size: int = 50
+    q: str | None = None
+    year_from: int | None = None
+    year_to: int | None = None
+    list_price_min: float | None = None
+    list_price_max: float | None = None
 
 
 def _row_to_result(row) -> dict:
@@ -97,6 +102,11 @@ def product_search(
     tag_ids: list[uuid.UUID] = Query(default=[]),
     dimension: Optional[DimensionEnum] = None,
     asset_type: Optional[AssetType] = None,
+    q: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -107,6 +117,11 @@ def product_search(
         tag_ids=tag_ids,
         dimension=dimension,
         asset_type=asset_type,
+        q=q,
+        year_from=year_from,
+        year_to=year_to,
+        list_price_min=list_price_min,
+        list_price_max=list_price_max,
         page=page,
         page_size=page_size,
     )
@@ -125,6 +140,11 @@ def product_semantic_search(
         db,
         query_vector=vec,
         mode="semantic",
+        q=body.q,
+        year_from=body.year_from,
+        year_to=body.year_to,
+        list_price_min=body.list_price_min,
+        list_price_max=body.list_price_max,
         page=body.page,
         page_size=body.page_size,
         candidate_limit=body.limit,
@@ -135,6 +155,11 @@ def product_semantic_search(
 @router.post("/products/vector", response_model=ProductSearchPage)
 def product_image_vector_search(
     file: UploadFile,
+    q: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int = 1,
     page_size: int = 50,
     limit: int = 300,
@@ -157,6 +182,11 @@ def product_image_vector_search(
         db,
         query_vector=vec,
         mode="vector",
+        q=q,
+        year_from=year_from,
+        year_to=year_to,
+        list_price_min=list_price_min,
+        list_price_max=list_price_max,
         page=page,
         page_size=page_size,
         candidate_limit=limit,

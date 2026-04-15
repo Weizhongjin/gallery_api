@@ -40,6 +40,7 @@ def upsert_product(
     *,
     product_code: str,
     name: str | None = None,
+    year: int | None = None,
     list_price: float | None = None,
     sale_price: float | None = None,
     currency: str = "CNY",
@@ -52,6 +53,8 @@ def upsert_product(
 
     if name is not None:
         product.name = name
+    if year is not None:
+        product.year = year
     if list_price is not None:
         product.list_price = list_price
     if sale_price is not None:
@@ -69,6 +72,10 @@ def list_products(
     *,
     q: str | None = None,
     tag_ids: list[uuid.UUID] | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Product], int]:
@@ -112,6 +119,15 @@ def list_products(
                 )
             )
 
+    if year_from is not None:
+        query = query.filter(Product.year.isnot(None), Product.year >= year_from)
+    if year_to is not None:
+        query = query.filter(Product.year.isnot(None), Product.year <= year_to)
+    if list_price_min is not None:
+        query = query.filter(Product.list_price.isnot(None), Product.list_price >= list_price_min)
+    if list_price_max is not None:
+        query = query.filter(Product.list_price.isnot(None), Product.list_price <= list_price_max)
+
     tmpuid_last = case((Product.product_code.ilike("TMPUID-%"), 1), else_=0)
     total = query.count()
     items = (
@@ -128,7 +144,7 @@ def patch_product(db: Session, product_id: uuid.UUID, **fields) -> Product | Non
     if not product:
         return None
 
-    for name in ("name", "list_price", "sale_price", "currency"):
+    for name in ("name", "year", "list_price", "sale_price", "currency"):
         if name in fields and fields[name] is not None:
             setattr(product, name, fields[name])
     db.commit()

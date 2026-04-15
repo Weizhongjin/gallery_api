@@ -155,6 +155,7 @@ class Product(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     list_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     sale_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     currency: Mapped[str] = mapped_column(String, nullable=False, default="CNY", server_default="CNY")

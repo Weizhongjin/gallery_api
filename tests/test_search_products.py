@@ -31,7 +31,7 @@ def viewer_token(db):
 
 
 def test_product_attribute_search_groups_assets_by_product(client, db, viewer_token):
-    product = Product(product_code="B540121", name="测试商品")
+    product = Product(product_code="B540121", name="测试商品", year=2026, list_price=5580)
     node = TaxonomyNode(dimension=DimensionEnum.category, name="外套")
     db.add_all([product, node])
     db.flush()
@@ -82,11 +82,13 @@ def test_product_attribute_search_groups_assets_by_product(client, db, viewer_to
     assert item["matched_asset_count"] == 2
     assert item["cover_asset_id"] is not None
     assert item["cover_thumb_uri"]
+    assert item["year"] == 2026
+    assert item["list_price"] == 5580.0
 
 
 def test_product_semantic_search_returns_product_dimension(client, db, viewer_token):
-    p1 = Product(product_code="B530022")
-    p2 = Product(product_code="B530023")
+    p1 = Product(product_code="B530022", year=2026, list_price=5980)
+    p2 = Product(product_code="B530023", year=2025, list_price=3980)
     db.add_all([p1, p2])
     db.flush()
 
@@ -148,3 +150,50 @@ def test_product_semantic_search_returns_product_dimension(client, db, viewer_to
     assert body["total"] >= 2
     assert body["items"][0]["product_code"] == "B530022"
     assert body["items"][0]["match_reasons"] == ["semantic"]
+
+
+def test_product_search_supports_year_and_price_range(client, db, viewer_token):
+    p1 = Product(product_code="B550001", year=2026, list_price=6800)
+    p2 = Product(product_code="B550002", year=2025, list_price=3200)
+    db.add_all([p1, p2])
+    db.flush()
+
+    a1 = Asset(
+        original_uri="s3://b/r1.jpg",
+        display_uri="s3://b/r1_d.jpg",
+        thumb_uri="s3://b/r1_t.jpg",
+        filename="B550001.jpg",
+        width=1000,
+        height=1500,
+        file_size=211,
+        feature_status={},
+    )
+    a2 = Asset(
+        original_uri="s3://b/r2.jpg",
+        display_uri="s3://b/r2_d.jpg",
+        thumb_uri="s3://b/r2_t.jpg",
+        filename="B550002.jpg",
+        width=1000,
+        height=1500,
+        file_size=212,
+        feature_status={},
+    )
+    db.add_all([a1, a2])
+    db.flush()
+
+    db.add_all(
+        [
+            AssetProduct(asset_id=a1.id, product_id=p1.id, relation_role=AssetProductRole.flatlay_primary),
+            AssetProduct(asset_id=a2.id, product_id=p2.id, relation_role=AssetProductRole.flatlay_primary),
+        ]
+    )
+    db.flush()
+
+    resp = client.get(
+        "/search/products?year_from=2026&list_price_min=6000",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["product_code"] == "B550001"

@@ -40,6 +40,7 @@ def upsert(
         db,
         product_code=body.product_code,
         name=body.name,
+        year=body.year,
         list_price=body.list_price,
         sale_price=body.sale_price,
         currency=body.currency,
@@ -50,12 +51,26 @@ def upsert(
 def list_all(
     q: str | None = None,
     tag_ids: list[uuid.UUID] = Query(default=[]),
+    year_from: int | None = None,
+    year_to: int | None = None,
+    list_price_min: float | None = None,
+    list_price_max: float | None = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    items, total = list_products(db, q=q, tag_ids=tag_ids, page=page, page_size=page_size)
+    items, total = list_products(
+        db,
+        q=q,
+        tag_ids=tag_ids,
+        year_from=year_from,
+        year_to=year_to,
+        list_price_min=list_price_min,
+        list_price_max=list_price_max,
+        page=page,
+        page_size=page_size,
+    )
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
