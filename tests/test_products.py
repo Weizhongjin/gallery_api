@@ -10,6 +10,7 @@ from app.assets.models import (
     AssetType,
     ParseStatus,
     Product,
+    ProductSalesSummary,
     ProductTag,
     ProductTagSource,
     TagSource,
@@ -112,6 +113,27 @@ def test_list_products_supports_year_and_price_range(client, admin_token, db):
     codes = {x["product_code"] for x in resp.json()["items"]}
     assert "B910001" in codes
     assert "B910002" not in codes
+
+
+def test_list_products_supports_sales_filters(client, admin_token, db):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    p1 = Product(product_code="B920001")
+    p2 = Product(product_code="B920002")
+    db.add_all([p1, p2])
+    db.flush()
+    db.add_all(
+        [
+            ProductSalesSummary(product_id=p1.id, product_code=p1.product_code, sales_total_qty=88),
+            ProductSalesSummary(product_id=p2.id, product_code=p2.product_code, sales_total_qty=5),
+        ]
+    )
+    db.commit()
+
+    resp = client.get("/products?page=1&page_size=50&sales_min=50", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert any(x["product_code"] == "B920001" and x["sales_total_qty"] == 88 for x in body["items"])
+    assert all(x["product_code"] != "B920002" for x in body["items"])
 
 
 def test_list_products_puts_tmpuid_last(client, admin_token, db):

@@ -50,6 +50,8 @@ class ProductSemanticSearchRequest(BaseModel):
     year_to: int | None = None
     list_price_min: float | None = None
     list_price_max: float | None = None
+    sales_min: int | None = None
+    sales_max: int | None = None
 
 
 def _row_to_result(row) -> dict:
@@ -107,6 +109,8 @@ def product_search(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -122,6 +126,8 @@ def product_search(
         year_to=year_to,
         list_price_min=list_price_min,
         list_price_max=list_price_max,
+        sales_min=sales_min,
+        sales_max=sales_max,
         page=page,
         page_size=page_size,
     )
@@ -145,6 +151,8 @@ def product_semantic_search(
         year_to=body.year_to,
         list_price_min=body.list_price_min,
         list_price_max=body.list_price_max,
+        sales_min=body.sales_min,
+        sales_max=body.sales_max,
         page=body.page,
         page_size=body.page_size,
         candidate_limit=body.limit,
@@ -160,6 +168,8 @@ def product_image_vector_search(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
     page: int = 1,
     page_size: int = 50,
     limit: int = 300,
@@ -187,6 +197,8 @@ def product_image_vector_search(
         year_to=year_to,
         list_price_min=list_price_min,
         list_price_max=list_price_max,
+        sales_min=sales_min,
+        sales_max=sales_max,
         page=page,
         page_size=page_size,
         candidate_limit=limit,

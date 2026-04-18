@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.assets.models import Product
+from app.config import settings
 from app.auth.deps import get_current_user, require_role
 from app.auth.models import User, UserRole
 from app.database import get_db
@@ -17,6 +17,7 @@ from app.products.schemas import (
     ProductUpsertIn,
 )
 from app.products.service import (
+    get_product_with_sales,
     list_product_assets,
     list_product_tags,
     list_products,
@@ -26,6 +27,7 @@ from app.products.service import (
     rebuild_product_tags_for_product,
     upsert_product,
 )
+from app.products.sales_sync import sync_sales_from_budan
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -55,6 +57,10 @@ def list_all(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -68,10 +74,20 @@ def list_all(
         year_to=year_to,
         list_price_min=list_price_min,
         list_price_max=list_price_max,
+        sales_min=sales_min,
+        sales_max=sales_max,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         page_size=page_size,
     )
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    out_items = [
+        ProductOut.model_validate(product, from_attributes=True).model_copy(
+            update={"sales_total_qty": int(sales_total_qty or 0)}
+        )
+        for product, sales_total_qty in items
+    ]
+    return {"items": out_items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{product_id}", response_model=ProductOut)
@@ -80,10 +96,13 @@ def get_one(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    product = db.get(Product, product_id)
-    if not product:
+    row = get_product_with_sales(db, product_id)
+    if not row:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    product, sales_total_qty = row
+    return ProductOut.model_validate(product, from_attributes=True).model_copy(
+        update={"sales_total_qty": int(sales_total_qty or 0)}
+    )
 
 
 @router.patch("/{product_id}", response_model=ProductOut)
@@ -178,3 +197,16 @@ def unresolved_assets(
         }
         for a in rows
     ]
+
+
+@router.post("/admin/sales/sync")
+def sync_sales(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    summary = sync_sales_from_budan(
+        db,
+        budan_database_url=settings.budan_database_url,
+        source="budan",
+    )
+    return summary

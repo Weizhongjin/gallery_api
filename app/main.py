@@ -8,7 +8,7 @@ from app.search.router import router as search_router
 from app.jobs.router import router as jobs_router
 from app.products.router import router as products_router
 
-app = FastAPI(title="Cloth Gallery API", version="1.0.0")
+app = FastAPI(title="Cloth Gallery API", version="1.1.0")
 app.include_router(auth_router)
 app.include_router(assets_router)
 app.include_router(users_router)

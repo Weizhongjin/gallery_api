@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum, Float, ForeignKey,
+    BigInteger, Boolean, Date, DateTime, Enum, Float, ForeignKey,
     Integer, String, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -206,6 +206,41 @@ class ProductTag(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SalesOrderRaw(Base):
+    __tablename__ = "sales_order_raw"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="budan", server_default="budan")
+    source_order_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    order_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    style_no_norm: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    total_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    customer: Mapped[str | None] = mapped_column(String, nullable=True)
+    salesperson: Mapped[str | None] = mapped_column(String, nullable=True)
+    order_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_file: Mapped[str | None] = mapped_column(String, nullable=True)
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ProductSalesSummary(Base):
+    __tablename__ = "product_sales_summary"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), primary_key=True
+    )
+    product_code: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    sales_total_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 

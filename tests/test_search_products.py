@@ -10,6 +10,7 @@ from app.assets.models import (
     AssetTag,
     DimensionEnum,
     Product,
+    ProductSalesSummary,
     TagSource,
     TaxonomyNode,
 )
@@ -197,3 +198,56 @@ def test_product_search_supports_year_and_price_range(client, db, viewer_token):
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["product_code"] == "B550001"
+
+
+def test_product_search_supports_sales_range(client, db, viewer_token):
+    p1 = Product(product_code="B560001")
+    p2 = Product(product_code="B560002")
+    db.add_all([p1, p2])
+    db.flush()
+    db.add_all(
+        [
+            ProductSalesSummary(product_id=p1.id, product_code=p1.product_code, sales_total_qty=120),
+            ProductSalesSummary(product_id=p2.id, product_code=p2.product_code, sales_total_qty=9),
+        ]
+    )
+
+    a1 = Asset(
+        original_uri="s3://b/sr1.jpg",
+        display_uri="s3://b/sr1_d.jpg",
+        thumb_uri="s3://b/sr1_t.jpg",
+        filename="B560001.jpg",
+        width=1000,
+        height=1500,
+        file_size=311,
+        feature_status={},
+    )
+    a2 = Asset(
+        original_uri="s3://b/sr2.jpg",
+        display_uri="s3://b/sr2_d.jpg",
+        thumb_uri="s3://b/sr2_t.jpg",
+        filename="B560002.jpg",
+        width=1000,
+        height=1500,
+        file_size=312,
+        feature_status={},
+    )
+    db.add_all([a1, a2])
+    db.flush()
+    db.add_all(
+        [
+            AssetProduct(asset_id=a1.id, product_id=p1.id, relation_role=AssetProductRole.flatlay_primary),
+            AssetProduct(asset_id=a2.id, product_id=p2.id, relation_role=AssetProductRole.flatlay_primary),
+        ]
+    )
+    db.flush()
+
+    resp = client.get(
+        "/search/products?sales_min=50",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["product_code"] == "B560001"
+    assert body["items"][0]["sales_total_qty"] == 120

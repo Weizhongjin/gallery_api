@@ -1,7 +1,7 @@
 import uuid
 from collections import defaultdict
 
-from sqlalchemy import case, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
@@ -13,6 +13,7 @@ from app.assets.models import (
     DimensionEnum,
     ParseStatus,
     Product,
+    ProductSalesSummary,
     ProductTag,
     ProductTagSource,
     TagSource,
@@ -76,10 +77,18 @@ def list_products(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
     page: int = 1,
     page_size: int = 50,
-) -> tuple[list[Product], int]:
-    query = db.query(Product)
+) -> tuple[list[tuple[Product, int]], int]:
+    sales_expr = func.coalesce(ProductSalesSummary.sales_total_qty, 0).label("sales_total_qty")
+    query = (
+        db.query(Product, sales_expr)
+        .outerjoin(ProductSalesSummary, ProductSalesSummary.product_id == Product.id)
+    )
     if q:
         key = f"%{q.strip().upper()}%"
         query = query.filter(
@@ -127,16 +136,42 @@ def list_products(
         query = query.filter(Product.list_price.isnot(None), Product.list_price >= list_price_min)
     if list_price_max is not None:
         query = query.filter(Product.list_price.isnot(None), Product.list_price <= list_price_max)
+    if sales_min is not None:
+        query = query.filter(func.coalesce(ProductSalesSummary.sales_total_qty, 0) >= sales_min)
+    if sales_max is not None:
+        query = query.filter(func.coalesce(ProductSalesSummary.sales_total_qty, 0) <= sales_max)
 
     tmpuid_last = case((Product.product_code.ilike("TMPUID-%"), 1), else_=0)
+    if sort_by == "sales_total_qty":
+        sales_order = sales_expr.desc() if (sort_order or "desc").lower() != "asc" else sales_expr.asc()
+        order_clauses = [tmpuid_last.asc(), sales_order, Product.created_at.desc()]
+    else:
+        created_order = Product.created_at.asc() if (sort_order or "desc").lower() == "asc" else Product.created_at.desc()
+        order_clauses = [tmpuid_last.asc(), created_order]
+
     total = query.count()
     items = (
-        query.order_by(tmpuid_last.asc(), Product.created_at.desc())
+        query.order_by(*order_clauses)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
     return items, total
+
+
+def get_product_with_sales(db: Session, product_id: uuid.UUID) -> tuple[Product, int] | None:
+    row = (
+        db.query(
+            Product,
+            func.coalesce(ProductSalesSummary.sales_total_qty, 0).label("sales_total_qty"),
+        )
+        .outerjoin(ProductSalesSummary, ProductSalesSummary.product_id == Product.id)
+        .filter(Product.id == product_id)
+        .first()
+    )
+    if not row:
+        return None
+    return row[0], int(row[1] or 0)
 
 
 def patch_product(db: Session, product_id: uuid.UUID, **fields) -> Product | None:

@@ -32,6 +32,7 @@ class ProductOut(BaseModel):
     year: int | None = None
     list_price: float | None = None
     sale_price: float | None = None
+    sales_total_qty: int | None = None
     currency: str
     created_at: datetime
     updated_at: datetime

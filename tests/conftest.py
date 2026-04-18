@@ -18,6 +18,41 @@ def db_engine():
 def db(db_engine):
     connection = db_engine.connect()
     transaction = connection.begin()
+    connection.execute(text("ALTER TABLE product ADD COLUMN IF NOT EXISTS year INTEGER"))
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS product_sales_summary (
+              product_id uuid PRIMARY KEY REFERENCES product(id),
+              product_code varchar NOT NULL,
+              sales_total_qty integer NOT NULL DEFAULT 0,
+              updated_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS sales_order_raw (
+              id serial PRIMARY KEY,
+              source varchar NOT NULL DEFAULT 'budan',
+              source_order_id integer NOT NULL,
+              order_date date NULL,
+              style_no_norm varchar NOT NULL,
+              total_qty integer NOT NULL DEFAULT 0,
+              customer varchar NULL,
+              salesperson varchar NULL,
+              order_type varchar NULL,
+              source_file varchar NULL,
+              raw_payload jsonb NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              CONSTRAINT uq_sales_order_raw_source_order UNIQUE (source, source_order_id)
+            )
+            """
+        )
+    )
     session = Session(bind=connection)
     yield session
     session.close()

@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from sqlalchemy import func
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,7 @@ from app.assets.models import (
     AssetType,
     DimensionEnum,
     Product,
+    ProductSalesSummary,
     TaxonomyNode,
 )
 
@@ -142,6 +144,8 @@ def _aggregate_product_candidates(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
     page: int,
     page_size: int,
 ) -> tuple[list[dict], int]:
@@ -168,8 +172,10 @@ def _aggregate_product_candidates(
             Product.list_price,
             Product.sale_price,
             Product.currency,
+            ProductSalesSummary.sales_total_qty,
         )
         .join(Product, Product.id == AssetProduct.product_id)
+        .outerjoin(ProductSalesSummary, ProductSalesSummary.product_id == Product.id)
         .filter(AssetProduct.asset_id.in_(asset_ids))
     )
     if q:
@@ -185,6 +191,10 @@ def _aggregate_product_candidates(
         links_query = links_query.filter(Product.list_price.isnot(None), Product.list_price >= list_price_min)
     if list_price_max is not None:
         links_query = links_query.filter(Product.list_price.isnot(None), Product.list_price <= list_price_max)
+    if sales_min is not None:
+        links_query = links_query.filter(func.coalesce(ProductSalesSummary.sales_total_qty, 0) >= sales_min)
+    if sales_max is not None:
+        links_query = links_query.filter(func.coalesce(ProductSalesSummary.sales_total_qty, 0) <= sales_max)
 
     links = links_query.all()
 
@@ -204,6 +214,7 @@ def _aggregate_product_candidates(
                 "list_price": link.list_price,
                 "sale_price": link.sale_price,
                 "currency": link.currency,
+                "sales_total_qty": int(link.sales_total_qty or 0),
                 "score": 0.0,
                 "match_reasons": set(),
                 "asset_matches": {},
@@ -240,6 +251,7 @@ def _aggregate_product_candidates(
                 "list_price": float(bucket["list_price"]) if bucket["list_price"] is not None else None,
                 "sale_price": float(bucket["sale_price"]) if bucket["sale_price"] is not None else None,
                 "currency": bucket["currency"],
+                "sales_total_qty": bucket["sales_total_qty"],
                 "score": score,
                 "match_reasons": sorted(bucket["match_reasons"]),
                 "cover_asset_id": cover_candidate.id if cover_candidate else None,
@@ -270,6 +282,8 @@ def product_attribute_search(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
     page: int,
     page_size: int,
     candidate_limit: int | None = None,
@@ -303,6 +317,8 @@ def product_attribute_search(
         year_to=year_to,
         list_price_min=list_price_min,
         list_price_max=list_price_max,
+        sales_min=sales_min,
+        sales_max=sales_max,
         page=page,
         page_size=page_size,
     )
@@ -318,6 +334,8 @@ def product_vector_search(
     year_to: int | None = None,
     list_price_min: float | None = None,
     list_price_max: float | None = None,
+    sales_min: int | None = None,
+    sales_max: int | None = None,
     page: int,
     page_size: int,
     candidate_limit: int,
@@ -332,6 +350,8 @@ def product_vector_search(
         year_to=year_to,
         list_price_min=list_price_min,
         list_price_max=list_price_max,
+        sales_min=sales_min,
+        sales_max=sales_max,
         page=page,
         page_size=page_size,
     )
