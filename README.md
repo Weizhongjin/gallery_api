@@ -13,7 +13,8 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 
 ## 当前定版信息
 
-- 定版日期：2026-04-13
+- 定版日期：2026-04-18
+- 版本：`1.1.0`（标签：`release1.1`）
 - API 文档入口：
   - Swagger UI：`http://127.0.0.1:8000/docs`
   - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
@@ -25,11 +26,13 @@ Gallery API 是一个面向服饰图片资产的后端服务，定位为：
 - 图片三种衍生版本管理（original / display / thumb）
 - 资产类型识别（`advertising / flatlay / model_set / unknown`）
 - 商品主数据（`product`）与资产多对多绑定（`asset_product`）
+- 商品销量汇总（`product_sales_summary`）与销售原始数据落库（`sales_order_raw`）
 - 商品统一标签（`product_tag`，由图片标签聚合）
 - Taxonomy 多维标签体系（category/style/color/scene/detail）
 - AI 自动打标 + 人工打标并存（`source=ai|human`）
 - 未命中标签沉淀到 `taxonomy_candidate` 供人工审核提升
 - 向量检索（text/image -> pgvector cosine search）
+- 商品维度检索支持销售筛选（`sales_min / sales_max`）
 - Lookbook 发布与访问授权（buyer 侧只读访问）
 - 任务进度查询（批处理 job）
 
@@ -81,6 +84,7 @@ cp .env.example .env
 
 最关键项：
 - `DATABASE_URL`
+- `BUDAN_DATABASE_URL`（用于销售同步）
 - `SECRET_KEY`
 - `S3_*` 或 `TOS_*`
 - `VLM_*`
@@ -174,6 +178,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `PATCH /products/{product_id}/tags`
 - `POST /products/{product_id}/tags/rebuild`
 - `GET /products/admin/unresolved-assets`
+- `POST /products/admin/sales/sync`
 
 ### Taxonomy
 - `GET /taxonomy`
@@ -190,6 +195,12 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `GET /search/products`
 - `POST /search/products/semantic`
 - `POST /search/products/vector`
+
+商品维度检索支持以下商品侧过滤参数：
+- `q`
+- `year_from / year_to`
+- `list_price_min / list_price_max`
+- `sales_min / sales_max`
 
 ### 商品维度检索（新增）
 
@@ -236,6 +247,18 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `POST /assets/{asset_id}/process`
 - `POST /assets/reprocess`
 - `POST /assets/batch-ingest/storage`
+
+## 销售数据同步（v1.1）
+
+用于把布单库（`budan.orders`）同步进 gallery：
+
+- 原始订单写入：`sales_order_raw`（按 `source + source_order_id` 幂等 upsert）
+- 商品销量汇总写入：`product_sales_summary`
+
+触发方式：
+
+- API：`POST /products/admin/sales/sync`（需要 `admin/editor`）
+- 脚本：`python scripts/sync_sales_from_budan.py`
 
 异步接口返回示例：
 
