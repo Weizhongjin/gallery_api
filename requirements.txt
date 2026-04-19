@@ -18,3 +18,4 @@ dashscope==1.24.0
 pytest-mock==3.14.0
 celery==5.4.0
 redis==5.1.1
+volcengine-python-sdk[ark]
