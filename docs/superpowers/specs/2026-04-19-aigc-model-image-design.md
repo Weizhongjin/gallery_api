@@ -1,4 +1,4 @@
-# AIGC 模特图生成功能设计（Nano Banana / OpenRouter）
+# AIGC 模特图生成功能设计（可插拔模型网关，首发 Seedream）
 
 - 日期：2026-04-19
 - 分支：feature/aigc-nano-banana-ideas
@@ -17,6 +17,7 @@
 4. 所有 AI 产物必须有不可删除的 `AI生成` 标识。
 5. 形成模板化提示词体系并可运营管理（版本、发布、回滚）。
 6. 全链路可追溯（输入、模板版本、模型参数、审核动作）。
+7. 模型层实现可插拔解耦，首发接入火山引擎 Seedream，后续可平滑切换其它模型。
 
 ## 2. 非目标（V1 不做）
 
@@ -37,15 +38,34 @@
 6. 前端入口：检索结果中平铺图支持“用此平铺图生成模特图”。
 7. 输入图片：必须使用原图链路（`original_uri`），禁止以缩略图/展示图参与生成。
 8. 长任务超时：AIGC 任务执行超时需大于 10 分钟（建议默认 15 分钟，允许配置到 20 分钟）。
+9. 模型能力：首发 provider 为 `seedream_ark`，默认模型 `doubao-seedream-4-5-251128`。
 
 ## 4. 总体方案
 
 采用“任务中心式”架构：
 
 1. 前端只负责发起任务、查看状态、执行审核。
-2. 后端统一负责编排：参数校验 -> 模板渲染 -> 调用 Nano Banana -> 候选持久化 -> 审核态流转。
+2. 后端统一负责编排：参数校验 -> 模板渲染 -> 调用模型网关 -> 候选持久化 -> 审核态流转。
 3. Celery 异步执行生图任务，避免请求阻塞与超时。
 4. 候选图与正式资产分层，未审核候选不得进入正式 `asset`。
+
+## 4.1 模型网关与可插拔 Provider
+
+1. 新增 `AigcProvider` 抽象接口，统一 `generate()` 入参与返回结构。
+2. 通过 `provider_registry` 按 `provider_key` 路由到具体实现，业务层不直接依赖某个 SDK。
+3. V1 默认 provider：`seedream_ark`，后续可挂 `openrouter_nano_banana`、`internal_sd` 等实现。
+4. 任务表记录 `provider` / `model_name` / `provider_profile`，保证复盘可追溯。
+5. 密钥仅从环境变量读取，不允许硬编码到代码、文档和日志。
+
+## 4.2 Seedream（首发）调用约束
+
+> 参数基线参考：`~/Desktop/inbox/火山引擎Seedream虚拟试穿方案.md`（密钥信息仅作本地配置，不进入仓库）。
+
+1. 平台：Volcengine Ark，Base URL 使用 `https://ark.cn-beijing.volces.com/api/v3`。
+2. 默认模型：`doubao-seedream-4-5-251128`（保留配置切换到 5.x 的能力）。
+3. 输入图顺序固定：`image[0]=参考模特图`，`image[1]=平铺服装图`。
+4. 默认分辨率：`2K`，`sequential_image_generation=disabled`，`stream=false`。
+5. 首版推荐 `response_format=url` 后回源下载并入库存储，避免上游链接过期影响审核。
 
 ## 5. 端到端业务流程
 
@@ -84,8 +104,9 @@
 - `template_id` (FK)
 - `template_version` (int)
 - `status` (`queued|running|review_pending|approved|rejected|failed`)
-- `provider` (string, e.g. `openrouter`)
+- `provider` (string, e.g. `seedream_ark`)
 - `model_name` (string)
+- `provider_profile` (string, e.g. `seedream-tryon-v1`)
 - `timeout_seconds` (int, default 900)
 - `created_by`, `reviewed_by`, `reviewed_at`
 - `error_code`, `error_message`
@@ -144,6 +165,7 @@
 - 校验：
   - 输入必须可解析到原图 URI
   - 上传参考图必须授权勾选
+- 可选：`provider` / `model_name`（未传则走系统默认 Seedream）
 - 返回：`task_id`, `status=queued`
 
 2. `GET /aigc/tasks`
@@ -154,6 +176,9 @@
 
 4. `POST /aigc/tasks/{id}/retry`
 - 功能：失败任务重试（权限控制）
+
+5. `GET /aigc/providers`
+- 功能：返回当前可用 provider 与默认模型配置（供前端展示与灰度选择）
 
 ### 7.2 审核接口
 
@@ -189,7 +214,7 @@
 
 1. `prepare_inputs`（拉取原图、校验权限）
 2. `render_prompt_template`（模板渲染）
-3. `call_nano_banana`（调用 OpenRouter）
+3. `call_model_provider`（调用 provider 适配器，V1=Seedream）
 4. `store_candidates`（保存候选图）
 5. `mark_review_pending`（任务转审核态）
 

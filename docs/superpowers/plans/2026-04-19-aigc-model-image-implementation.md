@@ -6,7 +6,7 @@
 
 **Architecture:** 采用后端任务中心（FastAPI + SQLAlchemy）和 Celery 异步生成；前端 `frontend_v2` 新增 `/ops/aigc` 页面并打通检索/商品入口。生成候选与正式资产分层，审核通过后再落正式 `asset`，并设置不可逆 `is_ai_generated=true`。
 
-**Tech Stack:** FastAPI, SQLAlchemy, Alembic, Celery, OpenAI SDK(OpenRouter), React + TypeScript + React Query + Vitest。
+**Tech Stack:** FastAPI, SQLAlchemy, Alembic, Celery, Volcengine Ark SDK, Provider Registry Pattern, React + TypeScript + React Query + Vitest。
 
 ---
 
@@ -19,8 +19,13 @@
   责任：AIGC 任务、候选图、提示词日志、授权日志、反馈、模板实体。
 - Create: `app/aigc/schemas.py`  
   责任：AIGC API 请求/响应模型。
-- Create: `app/aigc/provider.py`  
-  责任：Nano Banana(OpenRouter) 调用封装，统一超时与错误转换。
+- Create: `app/aigc/providers/__init__.py`
+- Create: `app/aigc/providers/base.py`  
+  责任：定义统一 `AigcProvider` 抽象接口。
+- Create: `app/aigc/providers/seedream_ark.py`  
+  责任：首发 Seedream Ark provider 实现（虚拟试穿）。
+- Create: `app/aigc/provider_registry.py`  
+  责任：provider 注册与路由，支持后续新增模型实现。
 - Create: `app/aigc/service.py`  
   责任：任务创建、候选持久化、审核入库、反馈写入、模板读取。
 - Create: `app/aigc/router.py`  
@@ -32,9 +37,11 @@
 - Modify: `app/ai/tasks.py`  
   责任：新增 AIGC Celery 任务，配置 15 分钟软超时与 20 分钟硬超时。
 - Modify: `app/config.py`  
-  责任：新增 AIGC/OpenRouter 配置。
+  责任：新增 AIGC/provider 配置（默认 Seedream Ark）。
 - Modify: `app/main.py`  
   责任：挂载 `aigc_router`。
+- Modify: `requirements.txt`  
+  责任：增加 Volcengine Ark SDK 依赖。
 - Modify: `alembic/env.py`
 - Create: `alembic/versions/9d8c7b6a5e4f_add_aigc_tables_and_ai_generated_flag.py`
 
@@ -60,6 +67,7 @@
 - Create: `tests/test_aigc_models.py`
 - Create: `tests/test_aigc_api.py`
 - Create: `tests/test_aigc_provider.py`
+- Create: `tests/test_aigc_provider_registry.py`
 - Create: `tests/test_aigc_celery.py`
 - Modify: `tests/conftest.py`（创建 AIGC 测试表兜底）
 - Create: `frontend_v2/src/modules/aigc/__tests__/aigc-page.test.tsx`
@@ -159,8 +167,10 @@ is_ai_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=F
 
 ```python
 # app/config.py (新增)
-openrouter_api_key: str = ""
-aigc_model_name: str = "google/gemini-3-pro-image-preview"
+volc_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+volc_ark_api_key: str = ""
+aigc_default_provider: str = "seedream_ark"
+aigc_model_name: str = "doubao-seedream-4-5-251128"
 aigc_default_candidate_count: int = 2
 aigc_provider_timeout_seconds: int = 700
 aigc_soft_timeout_seconds: int = 900
@@ -202,54 +212,84 @@ git commit -m "feat(aigc): add core models, config and migration"
 
 ---
 
-### Task 2: Provider 与 Celery 长任务执行链路
+### Task 2: Provider 抽象 + Seedream Ark 适配 + Celery 长任务
 
 **Files:**
-- Create: `app/aigc/provider.py`
+- Create: `app/aigc/providers/base.py`
+- Create: `app/aigc/providers/seedream_ark.py`
+- Create: `app/aigc/provider_registry.py`
 - Modify: `app/ai/tasks.py`
+- Modify: `requirements.txt`
 - Create: `tests/test_aigc_provider.py`
+- Create: `tests/test_aigc_provider_registry.py`
 - Create: `tests/test_aigc_celery.py`
 
 - [ ] **Step 1: 写失败测试（provider 调用与超时参数）**
 
 ```python
 # tests/test_aigc_provider.py
-from app.aigc.provider import NanoBananaProvider
+from app.aigc.providers.seedream_ark import SeedreamArkProvider
 
-def test_build_request_payload_contains_image_size_and_model():
-    provider = NanoBananaProvider(api_key="sk-test", model_name="google/gemini-3-pro-image-preview", timeout_seconds=700)
+def test_seedream_payload_contains_ordered_images_and_model():
+    provider = SeedreamArkProvider(api_key="ark-test", base_url="https://ark.cn-beijing.volces.com/api/v3", model_name="doubao-seedream-4-5-251128", timeout_seconds=700)
     payload = provider.build_request_payload(prompt="x", image_data_urls=["data:image/jpeg;base64,aaa"], resolution="2K")
-    assert payload["model"] == "google/gemini-3-pro-image-preview"
-    assert payload["extra_body"]["image_config"]["image_size"] == "2K"
+    assert payload["model"] == "doubao-seedream-4-5-251128"
+    assert payload["size"] == "2K"
+    assert payload["response_format"] == "url"
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `pytest tests/test_aigc_provider.py -v`  
-Expected: `ModuleNotFoundError: app.aigc.provider`
+Expected: `ModuleNotFoundError: app.aigc.providers.seedream_ark`
 
 - [ ] **Step 3: 实现 provider 封装与错误转换**
 
 ```python
-# app/aigc/provider.py (片段)
-class NanoBananaProvider:
-    def __init__(self, api_key: str, model_name: str, timeout_seconds: int) -> None:
-        self._client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, timeout=timeout_seconds)
+# app/aigc/providers/base.py (片段)
+class AigcProvider(Protocol):
+    provider_key: str
+    def generate(self, *, prompt: str, image_data_urls: list[str], resolution: str) -> list[bytes]:
+        ...
+
+# app/aigc/providers/seedream_ark.py (片段)
+class SeedreamArkProvider:
+    provider_key = "seedream_ark"
+
+    def __init__(self, api_key: str, base_url: str, model_name: str, timeout_seconds: int) -> None:
+        self._client = Ark(base_url=base_url, api_key=api_key, timeout=timeout_seconds)
         self._model_name = model_name
 
-    def generate(self, prompt: str, image_data_urls: list[str], resolution: str = "2K") -> list[bytes]:
-        content = [{"type": "text", "text": prompt}] + [
-            {"type": "image_url", "image_url": {"url": u}} for u in image_data_urls
-        ]
-        resp = self._client.chat.completions.create(
+    def generate(self, *, prompt: str, image_data_urls: list[str], resolution: str = "2K") -> list[bytes]:
+        resp = self._client.images.generate(
             model=self._model_name,
-            messages=[{"role": "user", "content": content}],
-            extra_body={"modalities": ["image", "text"], "image_config": {"image_size": resolution}},
+            prompt=prompt,
+            image=image_data_urls,
+            response_format="url",
+            size=resolution,
+            sequential_image_generation="disabled",
+            stream=False,
+            watermark=True,
         )
-        images = getattr(resp.choices[0].message, "images", None) or []
-        if not images:
-            raise ValueError("GENERATION_EMPTY")
-        return [decode_data_url(extract_image_url(item)) for item in images]
+        return download_image_urls([x.url for x in resp.data])
+
+# app/aigc/provider_registry.py (片段)
+def get_provider(provider_key: str, settings: Settings) -> AigcProvider:
+    if provider_key == "seedream_ark":
+        return SeedreamArkProvider(
+            api_key=settings.volc_ark_api_key,
+            base_url=settings.volc_ark_base_url,
+            model_name=settings.aigc_model_name,
+            timeout_seconds=settings.aigc_provider_timeout_seconds,
+        )
+    raise ValueError(f"unsupported provider: {provider_key}")
+```
+
+- [ ] **Step 3.1: 增加 Seedream SDK 依赖**
+
+```txt
+# requirements.txt
+volcengine-python-sdk[ark]
 ```
 
 - [ ] **Step 4: 在 Celery 新增 AIGC 任务（15/20 分钟）**
@@ -282,14 +322,14 @@ def celery_aigc_generate(self, task_id: str):
 
 - [ ] **Step 5: 运行测试验证 provider + celery 通过**
 
-Run: `pytest tests/test_aigc_provider.py tests/test_aigc_celery.py -v`  
+Run: `pytest tests/test_aigc_provider.py tests/test_aigc_provider_registry.py tests/test_aigc_celery.py -v`  
 Expected: 全部 PASS。
 
 - [ ] **Step 6: 提交**
 
 ```bash
-git add app/aigc/provider.py app/ai/tasks.py tests/test_aigc_provider.py tests/test_aigc_celery.py
-git commit -m "feat(aigc): add nano banana provider and celery long-running task"
+git add app/aigc/providers/base.py app/aigc/providers/seedream_ark.py app/aigc/provider_registry.py app/ai/tasks.py requirements.txt tests/test_aigc_provider.py tests/test_aigc_provider_registry.py tests/test_aigc_celery.py
+git commit -m "feat(aigc): add pluggable provider registry with seedream adapter"
 ```
 
 ---
@@ -352,6 +392,10 @@ def create_task(body: AigcTaskCreateIn, db: Session = Depends(get_db), user: Use
         from app.ai.tasks import celery_aigc_generate
         celery_aigc_generate.delay(str(task.id))
     return task
+
+@router.get("/providers", response_model=list[AigcProviderOut])
+def providers():
+    return list_available_providers()
 
 @router.post("/tasks/{task_id}/approve", response_model=AigcTaskOut)
 def approve(task_id: uuid.UUID, body: AigcApproveIn, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.admin, UserRole.editor))):
@@ -593,7 +637,7 @@ git commit -m "feat(frontend): wire search/products entry points into aigc workf
 
 - [ ] **Step 2: 执行后端测试 + 前端测试 + 构建**
 
-Run: `pytest tests/test_aigc_models.py tests/test_aigc_provider.py tests/test_aigc_celery.py tests/test_aigc_api.py tests/test_search_products.py -v`  
+Run: `pytest tests/test_aigc_models.py tests/test_aigc_provider.py tests/test_aigc_provider_registry.py tests/test_aigc_celery.py tests/test_aigc_api.py tests/test_search_products.py -v`  
 Run: `cd ../frontend_v2 && npm run test`  
 Run: `cd ../frontend_v2 && npm run build`  
 Expected: 全部通过。
@@ -623,6 +667,7 @@ git commit -m "docs: add aigc workflow, api contract, and timeout policy"
 
 - 平铺原图 + 参考图：Task 3（创建接口校验）+ Task 6（入口参数）。
 - 默认 2 张候选：Task 1（模型默认值）+ Task 3（服务逻辑）。
+- 模型可插拔解耦 + 首发 Seedream：Task 2（provider 抽象 + registry + seedream 适配）。
 - 默认去标识化可关闭：Task 1（字段）+ Task 3（请求/日志）。
 - 人工审核后入库：Task 3。
 - `AI生成` 不可逆标识：Task 1 + Task 3。
