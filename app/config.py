@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/1"
 
+    # AIGC provider settings
+    volc_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    volc_ark_api_key: str = ""
+    aigc_default_provider: str = "seedream_ark"
+    aigc_model_name: str = "doubao-seedream-4-5-251128"
+    aigc_default_candidate_count: int = 2
+    aigc_provider_timeout_seconds: int = 700
+    aigc_soft_timeout_seconds: int = 900
+    aigc_hard_timeout_seconds: int = 1200
+
     class Config:
         env_file = ".env"
 
