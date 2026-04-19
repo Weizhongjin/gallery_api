@@ -1,6 +1,6 @@
 # Gallery API 接口文档（中文）
 
-更新时间：2026-04-12  
+更新时间：2026-04-19
 服务地址（本地）：`http://127.0.0.1:8000`
 
 ## 1. 认证与用户
@@ -141,6 +141,77 @@
 
 ### GET `/jobs/{job_id}`
 - 说明：查询异步任务状态与进度。
+
+---
+
+## 8. AIGC 模特图生成（AIGC）
+
+AIGC 模块支持"平铺原图 + 参考图 → 模特图候选 → 人工审核 → 入商品资产"的完整生产闭环。
+
+### 任务状态机
+
+```
+queued → running → review_pending → approved
+                              └→ rejected
+       → failed
+```
+
+### POST `/aigc/tasks`
+- 说明：创建 AIGC 生成任务。
+- 权限：admin / editor
+- 请求体：
+  ```json
+  {
+    "product_id": "uuid",
+    "flatlay_asset_id": "uuid",
+    "reference_source": "library|upload",
+    "reference_asset_id": "uuid (library 时必填)",
+    "reference_upload_uri": "s3://... (upload 时必填)",
+    "consent_checked": true,
+    "face_deidentify_enabled": true,
+    "candidate_count": 2
+  }
+  ```
+- `consent_checked` 必须为 `true`，否则返回 422。
+
+### GET `/aigc/tasks`
+- 说明：列出 AIGC 任务（支持按状态和商品筛选）。
+- 权限：admin / editor / viewer
+- 参数：`status`, `product_id`, `limit`, `offset`
+
+### GET `/aigc/tasks/{task_id}`
+- 说明：获取单个任务详情（含候选列表）。
+- 权限：admin / editor / viewer
+
+### POST `/aigc/tasks/{task_id}/approve`
+- 说明：审核通过，选中候选入库为正式资产。
+- 权限：admin / editor
+- 请求体：
+  ```json
+  {
+    "selected_candidate_id": "uuid",
+    "target_asset_type": "model_set"
+  }
+  ```
+- 通过后自动创建 `Asset`（`is_ai_generated=True`）并绑定商品。
+
+### POST `/aigc/tasks/{task_id}/reject`
+- 说明：驳回任务。
+- 权限：admin / editor
+- 请求体：`{ "reason": "质量不达标" }`
+
+### POST `/aigc/candidates/{candidate_id}/feedback`
+- 说明：对候选图评分/评论。
+- 权限：admin / editor
+- 请求体：`{ "score": 1-5, "comment": "..." }`
+
+### GET `/aigc/providers`
+- 说明：列出可用的 AIGC 供应商。
+- 权限：admin / editor / viewer
+
+### 超时配置
+- Celery 软超时：`AIGC_SOFT_TIMEOUT_SECONDS`（默认 900s / 15 分钟）
+- Celery 硬超时：`AIGC_HARD_TIMEOUT_SECONDS`（默认 1200s / 20 分钟）
 
 ---
 
