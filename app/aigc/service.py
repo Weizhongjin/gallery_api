@@ -10,6 +10,7 @@ from app.aigc.models import (
     AigcCandidateFeedback,
     AigcPromptLog,
     AigcPromptTemplate,
+    AigcPromptTemplateStatus,
     AigcPromptTemplateVersion,
     AigcTask,
     AigcTaskCandidate,
@@ -20,6 +21,8 @@ from app.assets.models import Asset, AssetType
 from app.auth.models import User
 from app.config import settings
 from app.storage import get_storage, uri_to_key
+
+_FALLBACK_PROMPT = "virtual try-on"
 
 
 def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> AigcTask:
@@ -43,6 +46,16 @@ def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> Aigc
     else:
         raise HTTPException(status_code=422, detail="invalid reference_source")
 
+    default_template_id = (
+        db.query(AigcPromptTemplate.id)
+        .filter(
+            AigcPromptTemplate.is_default.is_(True),
+            AigcPromptTemplate.status == AigcPromptTemplateStatus.active,
+        )
+        .first()
+    )
+    default_template_id = default_template_id[0] if default_template_id else None
+
     task = AigcTask(
         product_id=body.product_id,
         flatlay_asset_id=body.flatlay_asset_id,
@@ -53,6 +66,7 @@ def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> Aigc
         reference_upload_uri=reference_upload_uri,
         face_deidentify_enabled=body.face_deidentify_enabled,
         candidate_count=body.candidate_count,
+        template_id=default_template_id,
         template_version=body.template_version,
         provider=settings.aigc_default_provider,
         model_name=settings.aigc_model_name,
@@ -226,9 +240,11 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
     flat_bytes = storage.get_object(uri_to_key(task.flatlay_original_uri))
     image_data_urls.append(_bytes_to_data_url(flat_bytes))
 
+    prompt, prompt_template_id, prompt_template_version = _resolve_task_prompt(db, task)
+
     provider = get_provider(task.provider, settings)
     images = provider.generate(
-        prompt="virtual try-on",
+        prompt=prompt,
         image_data_urls=image_data_urls,
         resolution="2K",
     )
@@ -252,8 +268,9 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
 
     prompt_log = AigcPromptLog(
         task_id=task.id,
-        template_version=task.template_version,
-        user_prompt="virtual try-on",
+        template_id=prompt_template_id,
+        template_version=prompt_template_version,
+        user_prompt=prompt,
     )
     db.add(prompt_log)
 
@@ -263,3 +280,47 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
 def _bytes_to_data_url(data: bytes) -> str:
     b64 = base64.b64encode(data).decode()
     return f"data:image/jpeg;base64,{b64}"
+
+
+def _resolve_task_prompt(
+    db: Session,
+    task: AigcTask,
+) -> tuple[str, uuid.UUID | None, int | None]:
+    # Prefer explicit template/version on task.
+    if task.template_id:
+        row = (
+            db.query(AigcPromptTemplateVersion)
+            .filter(
+                AigcPromptTemplateVersion.template_id == task.template_id,
+                AigcPromptTemplateVersion.version == task.template_version,
+            )
+            .first()
+        )
+        if row and row.content:
+            return row.content, task.template_id, task.template_version
+
+    # Fallback to current default published template.
+    default_tpl = (
+        db.query(AigcPromptTemplate)
+        .filter(
+            AigcPromptTemplate.is_default.is_(True),
+            AigcPromptTemplate.status == AigcPromptTemplateStatus.active,
+        )
+        .first()
+    )
+    if default_tpl:
+        row = (
+            db.query(AigcPromptTemplateVersion)
+            .filter(
+                AigcPromptTemplateVersion.template_id == default_tpl.id,
+                AigcPromptTemplateVersion.version == task.template_version,
+            )
+            .first()
+        )
+        if row and row.content:
+            if not task.template_id:
+                task.template_id = default_tpl.id
+            return row.content, default_tpl.id, task.template_version
+
+    # Last fallback keeps previous behavior.
+    return _FALLBACK_PROMPT, None, task.template_version
