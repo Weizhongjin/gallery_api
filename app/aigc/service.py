@@ -19,7 +19,7 @@ from app.aigc.schemas import AigcCandidateFeedbackIn, AigcTaskCreateIn
 from app.assets.models import Asset, AssetType
 from app.auth.models import User
 from app.config import settings
-from app.storage import get_storage
+from app.storage import get_storage, uri_to_key
 
 
 def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> AigcTask:
@@ -217,13 +217,13 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
 
     image_data_urls: list[str] = []
     if task.reference_original_uri:
-        ref_bytes = storage.download_bytes(task.reference_original_uri)
+        ref_bytes = storage.get_object(uri_to_key(task.reference_original_uri))
         image_data_urls.append(_bytes_to_data_url(ref_bytes))
     if task.reference_upload_uri:
-        ref_bytes = storage.download_bytes(task.reference_upload_uri)
+        ref_bytes = storage.get_object(uri_to_key(task.reference_upload_uri))
         image_data_urls.append(_bytes_to_data_url(ref_bytes))
 
-    flat_bytes = storage.download_bytes(task.flatlay_original_uri)
+    flat_bytes = storage.get_object(uri_to_key(task.flatlay_original_uri))
     image_data_urls.append(_bytes_to_data_url(flat_bytes))
 
     provider = get_provider(task.provider, settings)
@@ -235,9 +235,9 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
 
     for idx, img_bytes in enumerate(images):
         suffix = f"aigc_{task.id}_{idx + 1}.jpg"
-        uri = storage.upload_bytes(img_bytes, f"aigc/{suffix}", content_type="image/jpeg")
+        uri = storage.upload(f"aigc/{suffix}", img_bytes, content_type="image/jpeg")
         thumb_suffix = f"aigc_{task.id}_{idx + 1}_thumb.jpg"
-        thumb_uri = storage.upload_bytes(img_bytes, f"aigc/thumb_{thumb_suffix}", content_type="image/jpeg")
+        thumb_uri = storage.upload(f"aigc/thumb_{thumb_suffix}", img_bytes, content_type="image/jpeg")
 
         candidate = AigcTaskCandidate(
             task_id=task.id,

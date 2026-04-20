@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.aigc.models import AigcTaskStatus
@@ -32,6 +32,7 @@ router = APIRouter(prefix="/aigc", tags=["aigc"])
 @router.post("/tasks", response_model=AigcTaskOut, status_code=201)
 def create_task(
     body: AigcTaskCreateIn,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
@@ -40,7 +41,29 @@ def create_task(
         from app.ai.tasks import celery_aigc_generate
 
         celery_aigc_generate.delay(str(task.id))
+    else:
+        background_tasks.add_task(_run_aigc_background, str(task.id))
     return task
+
+
+def _run_aigc_background(task_id: str):
+    from app.database import SessionLocal
+    from app.aigc.service import run_aigc_generation, mark_aigc_task_failed
+
+    db = SessionLocal()
+    try:
+        run_aigc_generation(db, uuid.UUID(task_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            mark_aigc_task_failed(db, uuid.UUID(task_id), error_code="GENERATION_FAILED")
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @router.get("/tasks", response_model=list[AigcTaskOut])
