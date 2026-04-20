@@ -1,9 +1,11 @@
+import mimetypes
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.aigc.models import AigcTaskStatus
+from app.aigc.models import AigcTaskCandidate, AigcTaskStatus
 from app.aigc.provider_registry import list_available_providers
 from app.aigc.schemas import (
     AigcApproveIn,
@@ -21,10 +23,11 @@ from app.aigc.service import (
     list_aigc_tasks,
     reject_aigc_task,
 )
-from app.auth.deps import require_role
+from app.auth.deps import get_current_user_with_query_token, require_role
 from app.auth.models import User, UserRole
 from app.config import settings
 from app.database import get_db
+from app.storage import get_storage, uri_to_key
 
 router = APIRouter(prefix="/aigc", tags=["aigc"])
 
@@ -129,3 +132,30 @@ def providers(
     _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
 ):
     return list_available_providers()
+
+
+@router.get("/candidates/{candidate_id}/file")
+def get_candidate_file(
+    candidate_id: uuid.UUID,
+    kind: str = Query(default="thumb", pattern="^(thumb|original)$"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user_with_query_token),
+):
+    candidate = db.get(AigcTaskCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="candidate not found")
+
+    uri = candidate.thumb_uri if kind == "thumb" else candidate.image_uri
+    if not uri:
+        raise HTTPException(status_code=404, detail=f"candidate {kind} uri not available")
+
+    if uri.startswith("http://") or uri.startswith("https://"):
+        return RedirectResponse(url=uri)
+
+    try:
+        content = get_storage().get_object(uri_to_key(uri))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to read candidate object")
+
+    media_type = mimetypes.guess_type(uri)[0] or "application/octet-stream"
+    return Response(content=content, media_type=media_type)

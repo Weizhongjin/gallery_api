@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock, patch
 
 from app.auth.models import User, UserRole
 from app.auth.service import hash_password, create_access_token
@@ -307,3 +308,55 @@ def test_candidate_feedback(client, editor_token, db):
         headers={"Authorization": f"Bearer {editor_token}"},
     )
     assert resp.status_code == 201
+
+
+def test_get_candidate_file_proxy(client, editor_token, db):
+    product = _make_product(db, code="FILE-001")
+    flatlay = _make_flatlay_asset(db)
+
+    creator = User(
+        email="aigc_file_creator@example.com",
+        password_hash=hash_password("pw"),
+        name="FileCreator",
+        role=UserRole.editor,
+    )
+    db.add(creator)
+    db.flush()
+
+    task = AigcTask(
+        product_id=product.id,
+        flatlay_asset_id=flatlay.id,
+        flatlay_original_uri=flatlay.original_uri,
+        reference_source="library",
+        reference_asset_id=flatlay.id,
+        reference_original_uri=flatlay.original_uri,
+        status=AigcTaskStatus.review_pending,
+        provider="seedream_ark",
+        model_name="doubao-seedream-4-5-251128",
+        timeout_seconds=900,
+        created_by=creator.id,
+    )
+    db.add(task)
+    db.flush()
+
+    candidate = AigcTaskCandidate(
+        task_id=task.id,
+        seq_no=1,
+        image_uri="s3://bucket/cand-file.jpg",
+        thumb_uri="s3://bucket/cand-file-thumb.jpg",
+    )
+    db.add(candidate)
+    db.flush()
+
+    mock_storage = MagicMock()
+    mock_storage.get_object.return_value = b"candidate-bytes"
+
+    with patch("app.aigc.router.get_storage", return_value=mock_storage):
+        resp = client.get(
+            f"/aigc/candidates/{candidate.id}/file",
+            params={"kind": "thumb", "access_token": editor_token},
+        )
+
+    assert resp.status_code == 200
+    assert resp.content == b"candidate-bytes"
+    mock_storage.get_object.assert_called_once()
