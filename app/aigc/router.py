@@ -10,6 +10,7 @@ from app.aigc.provider_registry import list_available_providers
 from app.aigc.schemas import (
     AigcApproveIn,
     AigcCandidateFeedbackIn,
+    AigcOptimizeCreateIn,
     AigcProviderOut,
     AigcRejectIn,
     AigcTaskCreateIn,
@@ -18,6 +19,7 @@ from app.aigc.schemas import (
 from app.aigc.service import (
     add_candidate_feedback,
     approve_aigc_task,
+    create_aigc_optimization_task,
     create_aigc_task,
     get_aigc_task,
     list_aigc_tasks,
@@ -32,6 +34,18 @@ from app.storage import get_storage, uri_to_key
 router = APIRouter(prefix="/aigc", tags=["aigc"])
 
 
+def _enqueue_aigc_generation(background_tasks: BackgroundTasks, task_id: uuid.UUID) -> None:
+    if settings.async_mode == "celery":
+        from app.ai.tasks import celery_aigc_generate
+
+        celery_aigc_generate.apply_async(
+            args=[str(task_id)],
+            queue=settings.celery_aigc_queue,
+        )
+    else:
+        background_tasks.add_task(_run_aigc_background, str(task_id))
+
+
 @router.post("/tasks", response_model=AigcTaskOut, status_code=201)
 def create_task(
     body: AigcTaskCreateIn,
@@ -40,12 +54,9 @@ def create_task(
     user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
     task = create_aigc_task(db, user=user, body=body)
-    if settings.async_mode == "celery":
-        from app.ai.tasks import celery_aigc_generate
-
-        celery_aigc_generate.delay(str(task.id))
-    else:
-        background_tasks.add_task(_run_aigc_background, str(task.id))
+    db.commit()
+    db.refresh(task)
+    _enqueue_aigc_generation(background_tasks, task.id)
     return task
 
 
@@ -87,7 +98,7 @@ def get_task(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
 ):
-    return get_aigc_task(db, task_id)
+    return get_aigc_task(db, task_id, normalize_empty=True)
 
 
 @router.post("/tasks/{task_id}/approve", response_model=AigcTaskOut)
@@ -97,13 +108,16 @@ def approve_task(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
-    return approve_aigc_task(
+    task = approve_aigc_task(
         db,
         task_id=task_id,
         selected_candidate_id=body.selected_candidate_id,
         target_asset_type=body.target_asset_type,
         reviewer=user,
     )
+    db.commit()
+    db.refresh(task)
+    return task
 
 
 @router.post("/tasks/{task_id}/reject", response_model=AigcTaskOut)
@@ -113,7 +127,25 @@ def reject_task(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
-    return reject_aigc_task(db, task_id=task_id, reason=body.reason, reviewer=user)
+    task = reject_aigc_task(db, task_id=task_id, reason=body.reason, reviewer=user)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@router.post("/candidates/{candidate_id}/optimize", response_model=AigcTaskOut, status_code=201)
+def optimize_candidate(
+    candidate_id: uuid.UUID,
+    body: AigcOptimizeCreateIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    task = create_aigc_optimization_task(db, candidate_id=candidate_id, user=user, body=body)
+    db.commit()
+    db.refresh(task)
+    _enqueue_aigc_generation(background_tasks, task.id)
+    return task
 
 
 @router.post("/candidates/{candidate_id}/feedback", status_code=201)
@@ -124,6 +156,8 @@ def submit_feedback(
     user: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
     feedback = add_candidate_feedback(db, candidate_id=candidate_id, user=user, body=body)
+    db.commit()
+    db.refresh(feedback)
     return {"id": str(feedback.id), "candidate_id": str(feedback.candidate_id)}
 
 

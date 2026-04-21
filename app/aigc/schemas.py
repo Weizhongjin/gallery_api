@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.aigc.models import AigcTaskStatus
 from app.assets.models import AssetType
@@ -38,6 +39,23 @@ class AigcApproveIn(BaseModel):
     target_asset_type: AssetType = AssetType.model_set
 
 
+class AigcOptimizeCreateIn(BaseModel):
+    mode: Literal["auto", "custom"] = "auto"
+    custom_prompt: str | None = None
+    candidate_count: int = Field(default=1, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_custom_prompt(self):
+        normalized_prompt = self.custom_prompt.strip() if self.custom_prompt else None
+        if self.mode == "custom":
+            if not normalized_prompt:
+                raise ValueError("custom_prompt must be non-empty when mode is 'custom'")
+            if len(normalized_prompt) > 300:
+                raise ValueError("custom_prompt must be at most 300 characters")
+        self.custom_prompt = normalized_prompt
+        return self
+
+
 class AigcRejectIn(BaseModel):
     reason: str | None = None
 
@@ -64,6 +82,10 @@ class AigcTaskOut(BaseModel):
     reference_asset_id: uuid.UUID | None = None
     reference_original_uri: str | None = None
     reference_upload_uri: str | None = None
+    workflow_type: str
+    source_task_id: uuid.UUID | None = None
+    source_candidate_id: uuid.UUID | None = None
+    optimize_prompt: str | None = None
     face_deidentify_enabled: bool = True
     candidate_count: int = 2
     template_version: int = 1

@@ -1,9 +1,11 @@
 import base64
+import time
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from app.aigc.models import (
     AigcAuthorizationLog,
@@ -16,19 +18,49 @@ from app.aigc.models import (
     AigcTaskCandidate,
     AigcTaskStatus,
 )
-from app.aigc.schemas import AigcCandidateFeedbackIn, AigcTaskCreateIn
-from app.assets.models import Asset, AssetType
+from app.aigc.schemas import AigcCandidateFeedbackIn, AigcOptimizeCreateIn, AigcTaskCreateIn
+from app.assets.models import Asset, AssetProduct, AssetProductRole, AssetType
 from app.auth.models import User
 from app.config import settings
 from app.storage import get_storage, uri_to_key
 
 _FALLBACK_PROMPT = "virtual try-on"
+_EMPTY_RESULT_ERROR = "AIGC provider returned no images"
+_GENERATION_ERROR_CODE = "GENERATION_PROVIDER_ERROR"
+_OPTIMIZE_QUALITY_BASELINE = (
+    "优化质量要求：突出服装纹理，保证脸部自然清晰，修复手部结构，保持鞋子完整真实，"
+    "确保配饰细节准确协调。"
+)
+
+_AIGC_PRODUCT_ROLE_PRIORITY: dict[AssetProductRole, int] = {
+    AssetProductRole.flatlay_primary: 0,
+    AssetProductRole.manual: 1,
+    AssetProductRole.model_ref: 2,
+    AssetProductRole.advertising_ref: 3,
+}
+
+
+def _resolve_product_id_from_flatlay(db: Session, flatlay_asset_id: uuid.UUID) -> uuid.UUID | None:
+    rows = (
+        db.query(AssetProduct.product_id, AssetProduct.relation_role)
+        .filter(AssetProduct.asset_id == flatlay_asset_id)
+        .all()
+    )
+    if not rows:
+        return None
+    rows.sort(key=lambda x: (_AIGC_PRODUCT_ROLE_PRIORITY.get(x[1], 99), str(x[0])))
+    return rows[0][0]
 
 
 def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> AigcTask:
     flatlay_asset = db.get(Asset, body.flatlay_asset_id)
     if not flatlay_asset:
         raise HTTPException(status_code=404, detail="flatlay asset not found")
+    resolved_product_id = _resolve_product_id_from_flatlay(db, body.flatlay_asset_id)
+    if not resolved_product_id:
+        raise HTTPException(status_code=422, detail="flatlay asset is not bound to any product")
+    if body.product_id != resolved_product_id:
+        raise HTTPException(status_code=422, detail="product_id must match flatlay-linked product")
 
     if body.reference_source == "library":
         if not body.reference_asset_id:
@@ -57,7 +89,7 @@ def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> Aigc
     default_template_id = default_template_id[0] if default_template_id else None
 
     task = AigcTask(
-        product_id=body.product_id,
+        product_id=resolved_product_id,
         flatlay_asset_id=body.flatlay_asset_id,
         flatlay_original_uri=flatlay_asset.original_uri,
         reference_source=body.reference_source,
@@ -88,10 +120,75 @@ def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> Aigc
     return task
 
 
-def get_aigc_task(db: Session, task_id: uuid.UUID) -> AigcTask:
-    task = db.get(AigcTask, task_id)
+def create_aigc_optimization_task(
+    db: Session,
+    *,
+    candidate_id: uuid.UUID,
+    user: User,
+    body: AigcOptimizeCreateIn,
+) -> AigcTask:
+    candidate = db.get(AigcTaskCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="candidate not found")
+
+    source_task = db.get(AigcTask, candidate.task_id)
+    if not source_task:
+        raise HTTPException(status_code=404, detail="source task not found")
+    if source_task.status not in {AigcTaskStatus.review_pending, AigcTaskStatus.approved}:
+        raise HTTPException(
+            status_code=409,
+            detail="source task must be in review_pending or approved status",
+        )
+
+    reference_uri = candidate.image_uri or candidate.thumb_uri
+    if not reference_uri:
+        raise HTTPException(status_code=422, detail="candidate has no image available for optimization")
+
+    workflow_type = "optimize_custom" if body.mode == "custom" else "optimize_auto"
+
+    task = AigcTask(
+        product_id=source_task.product_id,
+        flatlay_asset_id=source_task.flatlay_asset_id,
+        flatlay_original_uri=source_task.flatlay_original_uri,
+        reference_source="upload",
+        reference_asset_id=None,
+        reference_original_uri=None,
+        reference_upload_uri=reference_uri,
+        workflow_type=workflow_type,
+        source_task_id=source_task.id,
+        source_candidate_id=candidate.id,
+        optimize_prompt=body.custom_prompt if body.mode == "custom" else None,
+        face_deidentify_enabled=source_task.face_deidentify_enabled,
+        candidate_count=body.candidate_count,
+        template_id=source_task.template_id,
+        template_version=source_task.template_version,
+        provider=source_task.provider,
+        model_name=source_task.model_name,
+        provider_profile=source_task.provider_profile,
+        timeout_seconds=source_task.timeout_seconds,
+        created_by=user.id,
+    )
+    db.add(task)
+    db.flush()
+    return task
+
+
+def get_aigc_task(
+    db: Session,
+    task_id: uuid.UUID,
+    *,
+    normalize_empty: bool = False,
+) -> AigcTask:
+    task = (
+        db.query(AigcTask)
+        .options(selectinload(AigcTask.candidates))
+        .filter(AigcTask.id == task_id)
+        .first()
+    )
     if not task:
         raise HTTPException(status_code=404, detail="AIGC task not found")
+    if normalize_empty:
+        _normalize_empty_review_pending(task)
     return task
 
 
@@ -103,13 +200,16 @@ def list_aigc_tasks(
     limit: int = 50,
     offset: int = 0,
 ) -> list[AigcTask]:
-    q = db.query(AigcTask)
+    q = db.query(AigcTask).options(selectinload(AigcTask.candidates))
     if status:
         q = q.filter(AigcTask.status == status)
     if product_id:
         q = q.filter(AigcTask.product_id == product_id)
     q = q.order_by(AigcTask.created_at.desc())
-    return q.offset(offset).limit(limit).all()
+    tasks = q.offset(offset).limit(limit).all()
+    for task in tasks:
+        _normalize_empty_review_pending(task)
+    return tasks
 
 
 def approve_aigc_task(
@@ -225,7 +325,9 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
         return
 
     task.status = AigcTaskStatus.running
-    db.flush()
+    # Persist "running" immediately so UI won't keep showing "queued"
+    # during a long provider call.
+    db.commit()
 
     storage = get_storage()
 
@@ -240,14 +342,73 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
     flat_bytes = storage.get_object(uri_to_key(task.flatlay_original_uri))
     image_data_urls.append(_bytes_to_data_url(flat_bytes))
 
-    prompt, prompt_template_id, prompt_template_version = _resolve_task_prompt(db, task)
+    base_prompt, prompt_template_id, prompt_template_version = _resolve_task_prompt(db, task)
+    prompt = _compose_effective_prompt(task, base_prompt)
 
     provider = get_provider(task.provider, settings)
-    images = provider.generate(
+    resolution = "2K"
+    target_count = _normalize_target_candidate_count(task.candidate_count)
+    request_payload = _build_generation_request_payload(
+        provider=provider,
         prompt=prompt,
         image_data_urls=image_data_urls,
-        resolution="2K",
+        resolution=resolution,
+        target_count=target_count,
     )
+    generation_started_at = time.monotonic()
+    generation_meta: dict = {
+        "target_candidate_count": target_count,
+        "timeout_seconds": task.timeout_seconds,
+        "attempts": [],
+    }
+
+    try:
+        images = _generate_images_with_topup(
+            provider=provider,
+            prompt=prompt,
+            image_data_urls=image_data_urls,
+            resolution=resolution,
+            target_count=target_count,
+            timeout_seconds=task.timeout_seconds,
+            attempts_meta=generation_meta["attempts"],
+        )
+    except Exception as exc:
+        task.status = AigcTaskStatus.failed
+        task.error_code = _GENERATION_ERROR_CODE
+        task.error_message = str(exc)
+        generation_meta["generated_candidate_count"] = 0
+        generation_meta["error_code"] = _GENERATION_ERROR_CODE
+        generation_meta["error_message"] = str(exc)
+        generation_meta["total_elapsed_ms"] = int((time.monotonic() - generation_started_at) * 1000)
+        _save_prompt_log(
+            db=db,
+            task_id=task.id,
+            template_id=prompt_template_id,
+            template_version=prompt_template_version,
+            prompt=prompt,
+            request_payload=request_payload,
+            response_meta=generation_meta,
+        )
+        return
+
+    if not images:
+        task.status = AigcTaskStatus.failed
+        task.error_code = "EMPTY_GENERATION_RESULT"
+        task.error_message = _EMPTY_RESULT_ERROR
+        generation_meta["generated_candidate_count"] = 0
+        generation_meta["error_code"] = "EMPTY_GENERATION_RESULT"
+        generation_meta["error_message"] = _EMPTY_RESULT_ERROR
+        generation_meta["total_elapsed_ms"] = int((time.monotonic() - generation_started_at) * 1000)
+        _save_prompt_log(
+            db=db,
+            task_id=task.id,
+            template_id=prompt_template_id,
+            template_version=prompt_template_version,
+            prompt=prompt,
+            request_payload=request_payload,
+            response_meta=generation_meta,
+        )
+        return
 
     for idx, img_bytes in enumerate(images):
         suffix = f"aigc_{task.id}_{idx + 1}.jpg"
@@ -266,14 +427,18 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
         )
         db.add(candidate)
 
-    prompt_log = AigcPromptLog(
+    generation_meta["generated_candidate_count"] = len(images)
+    generation_meta["partial_result"] = len(images) < target_count
+    generation_meta["total_elapsed_ms"] = int((time.monotonic() - generation_started_at) * 1000)
+    _save_prompt_log(
+        db=db,
         task_id=task.id,
         template_id=prompt_template_id,
         template_version=prompt_template_version,
-        user_prompt=prompt,
+        prompt=prompt,
+        request_payload=request_payload,
+        response_meta=generation_meta,
     )
-    db.add(prompt_log)
-
     task.status = AigcTaskStatus.review_pending
 
 
@@ -324,3 +489,139 @@ def _resolve_task_prompt(
 
     # Last fallback keeps previous behavior.
     return _FALLBACK_PROMPT, None, task.template_version
+
+
+def _compose_effective_prompt(task: AigcTask, base_prompt: str) -> str:
+    prompt_parts = [base_prompt.strip()]
+    if task.workflow_type in {"optimize_auto", "optimize_custom"}:
+        prompt_parts.append(_OPTIMIZE_QUALITY_BASELINE)
+    if task.workflow_type == "optimize_custom" and task.optimize_prompt:
+        prompt_parts.append(task.optimize_prompt.strip())
+    return "\n\n".join(part for part in prompt_parts if part)
+
+
+def _normalize_empty_review_pending(task: AigcTask) -> None:
+    if task.status != AigcTaskStatus.review_pending:
+        return
+    if task.candidates:
+        return
+    task.status = AigcTaskStatus.failed
+    if not task.error_code:
+        task.error_code = "EMPTY_GENERATION_RESULT"
+    if not task.error_message:
+        task.error_message = _EMPTY_RESULT_ERROR
+
+
+def _normalize_target_candidate_count(raw_count: int | None) -> int:
+    if raw_count is None:
+        return max(1, settings.aigc_default_candidate_count)
+    return max(1, int(raw_count))
+
+
+def _build_generation_request_payload(
+    *,
+    provider,
+    prompt: str,
+    image_data_urls: list[str],
+    resolution: str,
+    target_count: int,
+) -> dict:
+    provider_payload: dict | str
+    if hasattr(provider, "build_request_payload"):
+        payload = provider.build_request_payload(
+            prompt=prompt,
+            image_data_urls=image_data_urls,
+            resolution=resolution,
+            candidate_count=target_count,
+        )
+        provider_payload = payload if isinstance(payload, dict) else repr(payload)
+    else:
+        provider_payload = {
+            "prompt": prompt,
+            "resolution": resolution,
+            "candidate_count": target_count,
+            "input_image_count": len(image_data_urls),
+        }
+    return {
+        "prompt": prompt,
+        "resolution": resolution,
+        "target_candidate_count": target_count,
+        "input_image_count": len(image_data_urls),
+        "strategy": "top_up_until_target_or_timeout",
+        "provider_payload": provider_payload,
+    }
+
+
+def _generate_images_with_topup(
+    *,
+    provider,
+    prompt: str,
+    image_data_urls: list[str],
+    resolution: str,
+    target_count: int,
+    timeout_seconds: int,
+    attempts_meta: list[dict],
+) -> list[bytes]:
+    images: list[bytes] = []
+    start = time.monotonic()
+    deadline = start + max(1, timeout_seconds)
+    max_attempts = max(1, target_count)
+
+    for attempt_no in range(1, max_attempts + 1):
+        if len(images) >= target_count:
+            break
+        if attempt_no > 1 and time.monotonic() >= deadline:
+            attempts_meta.append(
+                {
+                    "attempt_no": attempt_no,
+                    "requested_candidate_count": target_count - len(images),
+                    "returned_candidate_count": 0,
+                    "timed_out_before_call": True,
+                }
+            )
+            break
+
+        requested_count = target_count - len(images)
+        call_started_at = time.monotonic()
+        batch = provider.generate(
+            prompt=prompt,
+            image_data_urls=image_data_urls,
+            resolution=resolution,
+            candidate_count=requested_count,
+        )
+        elapsed_ms = int((time.monotonic() - call_started_at) * 1000)
+        returned_count = len(batch)
+        attempts_meta.append(
+            {
+                "attempt_no": attempt_no,
+                "requested_candidate_count": requested_count,
+                "returned_candidate_count": returned_count,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        if returned_count == 0:
+            break
+        images.extend(batch)
+
+    return images[:target_count]
+
+
+def _save_prompt_log(
+    *,
+    db: Session,
+    task_id: uuid.UUID,
+    template_id: uuid.UUID | None,
+    template_version: int | None,
+    prompt: str,
+    request_payload: dict,
+    response_meta: dict,
+) -> None:
+    prompt_log = AigcPromptLog(
+        task_id=task_id,
+        template_id=template_id,
+        template_version=template_version,
+        user_prompt=prompt,
+        request_payload_json=request_payload,
+        response_meta_json=response_meta,
+    )
+    db.add(prompt_log)
