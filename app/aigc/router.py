@@ -23,6 +23,7 @@ from app.aigc.service import (
     create_aigc_task,
     get_aigc_task,
     list_aigc_tasks,
+    mark_aigc_task_failed,
     reject_aigc_task,
 )
 from app.auth.deps import get_current_user_with_query_token, require_role
@@ -32,6 +33,8 @@ from app.database import get_db
 from app.storage import get_storage, uri_to_key
 
 router = APIRouter(prefix="/aigc", tags=["aigc"])
+
+_ENQUEUE_ERROR_CODE = "AIGC_ENQUEUE_FAILED"
 
 
 def _enqueue_aigc_generation(background_tasks: BackgroundTasks, task_id: uuid.UUID) -> None:
@@ -46,6 +49,29 @@ def _enqueue_aigc_generation(background_tasks: BackgroundTasks, task_id: uuid.UU
         background_tasks.add_task(_run_aigc_background, str(task_id))
 
 
+def _compensate_enqueue_failure(db: Session, task_id: uuid.UUID, exc: Exception) -> None:
+    mark_aigc_task_failed(
+        db,
+        task_id,
+        error_code=_ENQUEUE_ERROR_CODE,
+        error_message=str(exc),
+    )
+    db.commit()
+
+
+def _enqueue_aigc_generation_or_502(
+    *,
+    db: Session,
+    background_tasks: BackgroundTasks,
+    task_id: uuid.UUID,
+) -> None:
+    try:
+        _enqueue_aigc_generation(background_tasks, task_id)
+    except Exception as exc:
+        _compensate_enqueue_failure(db, task_id, exc)
+        raise HTTPException(status_code=502, detail="Failed to enqueue AIGC generation") from exc
+
+
 @router.post("/tasks", response_model=AigcTaskOut, status_code=201)
 def create_task(
     body: AigcTaskCreateIn,
@@ -56,7 +82,8 @@ def create_task(
     task = create_aigc_task(db, user=user, body=body)
     db.commit()
     db.refresh(task)
-    _enqueue_aigc_generation(background_tasks, task.id)
+    _enqueue_aigc_generation_or_502(db=db, background_tasks=background_tasks, task_id=task.id)
+    db.refresh(task)
     return task
 
 
@@ -89,7 +116,9 @@ def get_tasks(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
 ):
-    return list_aigc_tasks(db, status=status, product_id=product_id, limit=limit, offset=offset)
+    tasks = list_aigc_tasks(db, status=status, product_id=product_id, limit=limit, offset=offset)
+    db.commit()
+    return tasks
 
 
 @router.get("/tasks/{task_id}", response_model=AigcTaskOut)
@@ -98,7 +127,9 @@ def get_task(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
 ):
-    return get_aigc_task(db, task_id, normalize_empty=True)
+    task = get_aigc_task(db, task_id, normalize_empty=True)
+    db.commit()
+    return task
 
 
 @router.post("/tasks/{task_id}/approve", response_model=AigcTaskOut)
@@ -144,7 +175,8 @@ def optimize_candidate(
     task = create_aigc_optimization_task(db, candidate_id=candidate_id, user=user, body=body)
     db.commit()
     db.refresh(task)
-    _enqueue_aigc_generation(background_tasks, task.id)
+    _enqueue_aigc_generation_or_502(db=db, background_tasks=background_tasks, task_id=task.id)
+    db.refresh(task)
     return task
 
 

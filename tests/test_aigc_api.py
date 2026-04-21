@@ -3,6 +3,7 @@ import uuid
 import pytest
 from unittest.mock import MagicMock, patch
 
+import app.aigc.router as aigc_router
 from app.aigc.schemas import AigcOptimizeCreateIn
 from app.auth.models import User, UserRole
 from app.auth.service import hash_password, create_access_token
@@ -230,6 +231,37 @@ def test_create_aigc_task_rejects_mismatched_product_for_flatlay(client, editor_
     assert "must match flatlay-linked product" in resp.json()["detail"]
 
 
+def test_create_aigc_task_allows_any_linked_product_for_multi_product_flatlay(
+    client, editor_token, db
+):
+    primary_product = _make_product(db, code="LINKED-PRIMARY-001")
+    secondary_product = _make_product(db, code="LINKED-SECONDARY-001")
+    flatlay = _make_flatlay_asset(db)
+    ref = _make_ref_asset(db)
+    _bind_asset_product(db, flatlay.id, primary_product.id, AssetProductRole.flatlay_primary)
+    _bind_asset_product(db, flatlay.id, secondary_product.id, AssetProductRole.manual)
+
+    with patch("app.aigc.router._enqueue_aigc_generation") as mock_enqueue:
+        resp = client.post(
+            "/aigc/tasks",
+            json={
+                "product_id": str(secondary_product.id),
+                "flatlay_asset_id": str(flatlay.id),
+                "reference_source": "library",
+                "reference_asset_id": str(ref.id),
+                "consent_checked": True,
+            },
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["product_id"] == str(secondary_product.id)
+    task = db.get(AigcTask, uuid.UUID(data["id"]))
+    assert task.product_id == secondary_product.id
+    mock_enqueue.assert_called_once()
+
+
 def test_optimize_candidate_creates_queued_task_with_lineage(client, editor_token, db):
     _, _, flatlay, source_task, candidate = _make_source_task_with_candidate(db)
 
@@ -431,6 +463,56 @@ def test_list_aigc_tasks(client, editor_token, db):
     )
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_list_aigc_tasks_normalizes_empty_review_pending_before_status_filtering(
+    client, editor_token, db
+):
+    product = _make_product(db, code="LIST-EMPTY-001")
+    flatlay = _make_flatlay_asset(db)
+    ref = _make_ref_asset(db)
+    user = _make_user(db)
+
+    task = AigcTask(
+        product_id=product.id,
+        flatlay_asset_id=flatlay.id,
+        flatlay_original_uri=flatlay.original_uri,
+        reference_source="library",
+        reference_asset_id=ref.id,
+        reference_original_uri=ref.original_uri,
+        status=AigcTaskStatus.review_pending,
+        provider="seedream_ark",
+        model_name="doubao-seedream-4-5-251128",
+        timeout_seconds=900,
+        created_by=user.id,
+    )
+    db.add(task)
+    db.flush()
+
+    review_pending_resp = client.get(
+        "/aigc/tasks",
+        params={"status": "review_pending"},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+
+    assert review_pending_resp.status_code == 200
+    assert str(task.id) not in {item["id"] for item in review_pending_resp.json()}
+
+    db.expire_all()
+    normalized_task = db.get(AigcTask, task.id)
+    assert normalized_task.status == AigcTaskStatus.failed
+    assert normalized_task.error_code == "EMPTY_GENERATION_RESULT"
+
+    failed_resp = client.get(
+        "/aigc/tasks",
+        params={"status": "failed"},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+
+    assert failed_resp.status_code == 200
+    failed_item = next(item for item in failed_resp.json() if item["id"] == str(task.id))
+    assert failed_item["status"] == "failed"
+    assert failed_item["error_code"] == "EMPTY_GENERATION_RESULT"
 
 
 def test_approve_task(client, editor_token, db):
@@ -809,3 +891,73 @@ def test_run_aigc_generation_topups_to_candidate_count_and_logs_audit(db):
     assert prompt_log.request_payload_json["target_candidate_count"] == 3
     assert prompt_log.response_meta_json["generated_candidate_count"] == 3
     assert len(prompt_log.response_meta_json["attempts"]) == 2
+
+
+def test_create_aigc_task_enqueue_failure_marks_task_failed_and_returns_502(
+    client, editor_token, db
+):
+    product = _make_product(db, code="ENQUEUE-CREATE-001")
+    flatlay = _make_flatlay_asset(db)
+    ref = _make_ref_asset(db)
+    _bind_asset_product(db, flatlay.id, product.id, AssetProductRole.flatlay_primary)
+
+    with patch.object(aigc_router.settings, "async_mode", "celery"), patch(
+        "app.ai.tasks.celery_aigc_generate.apply_async",
+        side_effect=RuntimeError("broker unavailable"),
+    ):
+        resp = client.post(
+            "/aigc/tasks",
+            json={
+                "product_id": str(product.id),
+                "flatlay_asset_id": str(flatlay.id),
+                "reference_source": "library",
+                "reference_asset_id": str(ref.id),
+                "consent_checked": True,
+            },
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "Failed to enqueue AIGC generation"
+
+    task = (
+        db.query(AigcTask)
+        .filter(AigcTask.product_id == product.id, AigcTask.flatlay_asset_id == flatlay.id)
+        .order_by(AigcTask.created_at.desc())
+        .first()
+    )
+    assert task is not None
+    assert task.status == AigcTaskStatus.failed
+    assert task.error_code == "AIGC_ENQUEUE_FAILED"
+    assert task.error_message == "broker unavailable"
+
+
+def test_optimize_candidate_enqueue_failure_marks_task_failed_and_returns_502(
+    client, editor_token, db
+):
+    _, _, _, source_task, candidate = _make_source_task_with_candidate(db)
+
+    with patch.object(aigc_router.settings, "async_mode", "celery"), patch(
+        "app.ai.tasks.celery_aigc_generate.apply_async",
+        side_effect=RuntimeError("broker unavailable"),
+    ):
+        resp = client.post(
+            f"/aigc/candidates/{candidate.id}/optimize",
+            json={},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "Failed to enqueue AIGC generation"
+
+    task = (
+        db.query(AigcTask)
+        .filter(AigcTask.source_task_id == source_task.id, AigcTask.source_candidate_id == candidate.id)
+        .order_by(AigcTask.created_at.desc())
+        .first()
+    )
+    assert task is not None
+    assert task.workflow_type == "optimize_auto"
+    assert task.status == AigcTaskStatus.failed
+    assert task.error_code == "AIGC_ENQUEUE_FAILED"
+    assert task.error_message == "broker unavailable"

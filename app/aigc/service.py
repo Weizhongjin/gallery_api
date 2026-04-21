@@ -27,6 +27,7 @@ from app.storage import get_storage, uri_to_key
 _FALLBACK_PROMPT = "virtual try-on"
 _EMPTY_RESULT_ERROR = "AIGC provider returned no images"
 _GENERATION_ERROR_CODE = "GENERATION_PROVIDER_ERROR"
+_EMPTY_GENERATION_RESULT_CODE = "EMPTY_GENERATION_RESULT"
 _OPTIMIZE_QUALITY_BASELINE = (
     "优化质量要求：突出服装纹理，保证脸部自然清晰，修复手部结构，保持鞋子完整真实，"
     "确保配饰细节准确协调。"
@@ -40,26 +41,26 @@ _AIGC_PRODUCT_ROLE_PRIORITY: dict[AssetProductRole, int] = {
 }
 
 
-def _resolve_product_id_from_flatlay(db: Session, flatlay_asset_id: uuid.UUID) -> uuid.UUID | None:
+def _list_product_ids_from_flatlay(db: Session, flatlay_asset_id: uuid.UUID) -> list[uuid.UUID]:
     rows = (
         db.query(AssetProduct.product_id, AssetProduct.relation_role)
         .filter(AssetProduct.asset_id == flatlay_asset_id)
         .all()
     )
     if not rows:
-        return None
+        return []
     rows.sort(key=lambda x: (_AIGC_PRODUCT_ROLE_PRIORITY.get(x[1], 99), str(x[0])))
-    return rows[0][0]
+    return [row[0] for row in rows]
 
 
 def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> AigcTask:
     flatlay_asset = db.get(Asset, body.flatlay_asset_id)
     if not flatlay_asset:
         raise HTTPException(status_code=404, detail="flatlay asset not found")
-    resolved_product_id = _resolve_product_id_from_flatlay(db, body.flatlay_asset_id)
-    if not resolved_product_id:
+    linked_product_ids = _list_product_ids_from_flatlay(db, body.flatlay_asset_id)
+    if not linked_product_ids:
         raise HTTPException(status_code=422, detail="flatlay asset is not bound to any product")
-    if body.product_id != resolved_product_id:
+    if body.product_id not in linked_product_ids:
         raise HTTPException(status_code=422, detail="product_id must match flatlay-linked product")
 
     if body.reference_source == "library":
@@ -89,7 +90,7 @@ def create_aigc_task(db: Session, *, user: User, body: AigcTaskCreateIn) -> Aigc
     default_template_id = default_template_id[0] if default_template_id else None
 
     task = AigcTask(
-        product_id=resolved_product_id,
+        product_id=body.product_id,
         flatlay_asset_id=body.flatlay_asset_id,
         flatlay_original_uri=flatlay_asset.original_uri,
         reference_source=body.reference_source,
@@ -179,6 +180,8 @@ def get_aigc_task(
     *,
     normalize_empty: bool = False,
 ) -> AigcTask:
+    if normalize_empty:
+        _normalize_empty_review_pending_tasks(db, task_id=task_id)
     task = (
         db.query(AigcTask)
         .options(selectinload(AigcTask.candidates))
@@ -187,8 +190,6 @@ def get_aigc_task(
     )
     if not task:
         raise HTTPException(status_code=404, detail="AIGC task not found")
-    if normalize_empty:
-        _normalize_empty_review_pending(task)
     return task
 
 
@@ -200,16 +201,15 @@ def list_aigc_tasks(
     limit: int = 50,
     offset: int = 0,
 ) -> list[AigcTask]:
+    if status in {None, AigcTaskStatus.review_pending, AigcTaskStatus.failed}:
+        _normalize_empty_review_pending_tasks(db, product_id=product_id)
     q = db.query(AigcTask).options(selectinload(AigcTask.candidates))
     if status:
         q = q.filter(AigcTask.status == status)
     if product_id:
         q = q.filter(AigcTask.product_id == product_id)
     q = q.order_by(AigcTask.created_at.desc())
-    tasks = q.offset(offset).limit(limit).all()
-    for task in tasks:
-        _normalize_empty_review_pending(task)
-    return tasks
+    return q.offset(offset).limit(limit).all()
 
 
 def approve_aigc_task(
@@ -310,11 +310,19 @@ def add_candidate_feedback(
     return feedback
 
 
-def mark_aigc_task_failed(db: Session, task_id: uuid.UUID, error_code: str) -> None:
+def mark_aigc_task_failed(
+    db: Session,
+    task_id: uuid.UUID,
+    error_code: str,
+    *,
+    error_message: str | None = None,
+) -> None:
     task = db.get(AigcTask, task_id)
     if task:
         task.status = AigcTaskStatus.failed
         task.error_code = error_code
+        if error_message is not None:
+            task.error_message = error_message
 
 
 def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
@@ -393,10 +401,10 @@ def run_aigc_generation(db: Session, task_id: uuid.UUID) -> None:
 
     if not images:
         task.status = AigcTaskStatus.failed
-        task.error_code = "EMPTY_GENERATION_RESULT"
+        task.error_code = _EMPTY_GENERATION_RESULT_CODE
         task.error_message = _EMPTY_RESULT_ERROR
         generation_meta["generated_candidate_count"] = 0
-        generation_meta["error_code"] = "EMPTY_GENERATION_RESULT"
+        generation_meta["error_code"] = _EMPTY_GENERATION_RESULT_CODE
         generation_meta["error_message"] = _EMPTY_RESULT_ERROR
         generation_meta["total_elapsed_ms"] = int((time.monotonic() - generation_started_at) * 1000)
         _save_prompt_log(
@@ -507,9 +515,41 @@ def _normalize_empty_review_pending(task: AigcTask) -> None:
         return
     task.status = AigcTaskStatus.failed
     if not task.error_code:
-        task.error_code = "EMPTY_GENERATION_RESULT"
+        task.error_code = _EMPTY_GENERATION_RESULT_CODE
     if not task.error_message:
         task.error_message = _EMPTY_RESULT_ERROR
+
+
+def _normalize_empty_review_pending_tasks(
+    db: Session,
+    *,
+    task_id: uuid.UUID | None = None,
+    product_id: uuid.UUID | None = None,
+) -> int:
+    q = (
+        db.query(AigcTask)
+        .outerjoin(AigcTaskCandidate, AigcTaskCandidate.task_id == AigcTask.id)
+        .filter(
+            AigcTask.status == AigcTaskStatus.review_pending,
+            AigcTaskCandidate.id.is_(None),
+        )
+    )
+    if task_id:
+        q = q.filter(AigcTask.id == task_id)
+    if product_id:
+        q = q.filter(AigcTask.product_id == product_id)
+
+    tasks = q.all()
+    for task in tasks:
+        task.status = AigcTaskStatus.failed
+        if not task.error_code:
+            task.error_code = _EMPTY_GENERATION_RESULT_CODE
+        if not task.error_message:
+            task.error_message = _EMPTY_RESULT_ERROR
+
+    if tasks:
+        db.flush()
+    return len(tasks)
 
 
 def _normalize_target_candidate_count(raw_count: int | None) -> int:
