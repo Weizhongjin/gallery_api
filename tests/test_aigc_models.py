@@ -1,5 +1,4 @@
 import uuid
-from sqlalchemy import text
 from app.assets.models import Asset, AssetType, ParseStatus, Product
 from app.aigc.models import (
     AigcTask, AigcTaskStatus, AigcTaskCandidate,
@@ -46,13 +45,6 @@ def _make_flatlay_asset(db):
     return asset
 
 
-def _ensure_aigc_task_optimization_columns(db):
-    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS workflow_type varchar NOT NULL DEFAULT 'base'"))
-    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_task_id uuid NULL"))
-    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_candidate_id uuid NULL"))
-    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS optimize_prompt varchar NULL"))
-
-
 def test_aigc_task_defaults(db):
     user = _make_user(db)
     product = _make_product(db)
@@ -80,7 +72,6 @@ def test_aigc_task_defaults(db):
 
 
 def test_aigc_task_optimization_defaults_and_lineage(db):
-    _ensure_aigc_task_optimization_columns(db)
     user = _make_user(db)
     product = _make_product(db)
     asset = _make_flatlay_asset(db)

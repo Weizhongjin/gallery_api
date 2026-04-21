@@ -19,6 +19,10 @@ def db(db_engine):
     connection = db_engine.connect()
     transaction = connection.begin()
     connection.execute(text("ALTER TABLE product ADD COLUMN IF NOT EXISTS year INTEGER"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS workflow_type varchar NOT NULL DEFAULT 'base'"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_task_id uuid NULL"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_candidate_id uuid NULL"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS optimize_prompt varchar NULL"))
     connection.execute(
         text(
             """
