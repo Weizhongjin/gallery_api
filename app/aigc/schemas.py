@@ -16,7 +16,7 @@ class AigcTaskCreateIn(BaseModel):
     reference_upload_uri: str | None = None
     consent_checked: bool = False
     face_deidentify_enabled: bool = True
-    candidate_count: int = 2
+    candidate_count: int = Field(default=2, ge=1, le=4)
     template_version: int = 1
 
     @field_validator("reference_source")

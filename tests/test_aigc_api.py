@@ -180,6 +180,27 @@ def test_create_aigc_task_success(client, editor_token, db):
     assert data["provider"] == "seedream_ark"
 
 
+def test_create_aigc_task_rejects_candidate_count_out_of_range(client, editor_token, db):
+    product = _make_product(db)
+    flatlay = _make_flatlay_asset(db)
+    ref = _make_ref_asset(db)
+    _bind_asset_product(db, flatlay.id, product.id, AssetProductRole.flatlay_primary)
+
+    resp = client.post(
+        "/aigc/tasks",
+        json={
+            "product_id": str(product.id),
+            "flatlay_asset_id": str(flatlay.id),
+            "reference_source": "library",
+            "reference_asset_id": str(ref.id),
+            "consent_checked": True,
+            "candidate_count": 99,
+        },
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert resp.status_code == 422
+
+
 def test_create_aigc_task_persists_and_appears_in_list(client, editor_token, db):
     product = _make_product(db, code="PERSIST-001")
     flatlay = _make_flatlay_asset(db)
