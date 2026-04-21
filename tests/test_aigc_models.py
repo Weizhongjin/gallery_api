@@ -1,4 +1,5 @@
 import uuid
+from sqlalchemy import text
 from app.assets.models import Asset, AssetType, ParseStatus, Product
 from app.aigc.models import (
     AigcTask, AigcTaskStatus, AigcTaskCandidate,
@@ -45,6 +46,13 @@ def _make_flatlay_asset(db):
     return asset
 
 
+def _ensure_aigc_task_optimization_columns(db):
+    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS workflow_type varchar NOT NULL DEFAULT 'base'"))
+    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_task_id uuid NULL"))
+    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_candidate_id uuid NULL"))
+    db.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS optimize_prompt varchar NULL"))
+
+
 def test_aigc_task_defaults(db):
     user = _make_user(db)
     product = _make_product(db)
@@ -69,6 +77,29 @@ def test_aigc_task_defaults(db):
     assert task.candidate_count == 2
     assert task.provider == "seedream_ark"
     assert task.model_name == "doubao-seedream-4-5-251128"
+
+
+def test_aigc_task_optimization_defaults_and_lineage(db):
+    _ensure_aigc_task_optimization_columns(db)
+    user = _make_user(db)
+    product = _make_product(db)
+    asset = _make_flatlay_asset(db)
+
+    task = AigcTask(
+        product_id=product.id,
+        flatlay_asset_id=asset.id,
+        flatlay_original_uri=asset.original_uri,
+        reference_source="library",
+        template_version=1,
+        created_by=user.id,
+    )
+    db.add(task)
+    db.flush()
+
+    assert task.workflow_type == "base"
+    assert task.source_task_id is None
+    assert task.source_candidate_id is None
+    assert task.optimize_prompt is None
 
 
 def test_aigc_task_candidate(db):

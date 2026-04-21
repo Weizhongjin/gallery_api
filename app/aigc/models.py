@@ -6,7 +6,7 @@ from sqlalchemy import (
     Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -31,6 +31,10 @@ class AigcTask(Base):
     reference_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("asset.id"), nullable=True)
     reference_original_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     reference_upload_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    workflow_type: Mapped[str] = mapped_column(String, nullable=False, default="base", server_default="base")
+    source_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("aigc_task.id"), nullable=True)
+    source_candidate_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("aigc_task_candidate.id"), nullable=True)
+    optimize_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     face_deidentify_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2, server_default="2")
     template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("aigc_prompt_template.id"), nullable=True)
@@ -52,6 +56,13 @@ class AigcTask(Base):
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    candidates: Mapped[list["AigcTaskCandidate"]] = relationship(
+        "AigcTaskCandidate",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        foreign_keys="AigcTaskCandidate.task_id",
+        order_by="AigcTaskCandidate.seq_no",
+    )
 
 
 class AigcTaskCandidate(Base):
@@ -67,6 +78,11 @@ class AigcTaskCandidate(Base):
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    task: Mapped["AigcTask"] = relationship(
+        "AigcTask",
+        back_populates="candidates",
+        foreign_keys="AigcTaskCandidate.task_id",
+    )
 
 
 class AigcPromptLog(Base):
