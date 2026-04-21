@@ -3,7 +3,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, func,
+    Boolean, CheckConstraint, DateTime, Enum, Float, ForeignKey, ForeignKeyConstraint,
+    Integer, String, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,6 +23,18 @@ class AigcTaskStatus(str, enum.Enum):
 
 class AigcTask(Base):
     __tablename__ = "aigc_task"
+    __table_args__ = (
+        CheckConstraint(
+            "(source_task_id IS NULL AND source_candidate_id IS NULL) OR "
+            "(source_task_id IS NOT NULL AND source_candidate_id IS NOT NULL)",
+            name="ck_aigc_task_source_pair_nullity",
+        ),
+        ForeignKeyConstraint(
+            ["source_task_id", "source_candidate_id"],
+            ["aigc_task_candidate.task_id", "aigc_task_candidate.id"],
+            name="fk_aigc_task_source_task_source_candidate_pair",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("product.id"), nullable=False)
@@ -67,6 +80,9 @@ class AigcTask(Base):
 
 class AigcTaskCandidate(Base):
     __tablename__ = "aigc_task_candidate"
+    __table_args__ = (
+        UniqueConstraint("task_id", "id", name="uq_aigc_task_candidate_task_id_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("aigc_task.id"), nullable=False)
