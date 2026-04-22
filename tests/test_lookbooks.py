@@ -456,3 +456,181 @@ def test_remove_last_section_item_clears_cover(client, editor_token, db, sample_
     sec = refreshed.json()[0]
     assert sec["cover_asset_id"] is None
     assert len(sec["items"]) == 0
+
+
+# --- Fix 1: Legacy compatibility tests ---
+
+
+def test_legacy_items_appear_as_section_in_editor(client, editor_token, sample_asset, db):
+    """Old lookbooks with only lookbook_item data should still show in the section-based editor."""
+    from app.assets.models import LookbookItem
+
+    lb = client.post("/lookbooks", json={"title": "Legacy LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    # Add items via the old flat API
+    a2 = Asset(
+        original_uri="s3://b/o_leg.jpg", display_uri="s3://b/d_leg.jpg", thumb_uri="s3://b/t_leg.jpg",
+        filename="leg.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add(a2)
+    db.flush()
+
+    db.add(LookbookItem(lookbook_id=lb_id, asset_id=sample_asset.id, sort_order=0, note="main"))
+    db.add(LookbookItem(lookbook_id=lb_id, asset_id=a2.id, sort_order=1))
+    db.flush()
+
+    # GET sections should return a synthetic legacy section
+    response = client.get(
+        f"/lookbooks/{lb_id}/sections",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    section = body[0]
+    assert section["product_id"] is None
+    assert len(section["items"]) == 2
+    assert section["items"][0]["source"] == "legacy"
+    assert section["items"][0]["is_cover"] is True
+    assert section["items"][1]["is_cover"] is False
+
+
+# --- Fix 3: Buyer global sort_order test ---
+
+
+def test_buyer_flattened_items_have_global_sort_order(client, admin_token, editor_token, buyer_user, db, sample_product):
+    """Buyer items from multiple sections should have globally unique sort_order."""
+    from app.assets.models import LookbookProductSection, LookbookSectionItem
+
+    lb = client.post("/lookbooks", json={"title": "Sort LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    a1 = Asset(
+        original_uri="s3://b/s1.jpg", display_uri="s3://b/d_s1.jpg", thumb_uri="s3://b/t_s1.jpg",
+        filename="s1.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    a2 = Asset(
+        original_uri="s3://b/s2.jpg", display_uri="s3://b/d_s2.jpg", thumb_uri="s3://b/t_s2.jpg",
+        filename="s2.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add_all([a1, a2])
+    db.flush()
+
+    p2 = Product(product_code="SORT-002", name="Second Product")
+    db.add(p2)
+    db.flush()
+
+    sec1 = LookbookProductSection(lookbook_id=lb_id, product_id=sample_product.id, sort_order=0, cover_asset_id=a1.id)
+    sec2 = LookbookProductSection(lookbook_id=lb_id, product_id=p2.id, sort_order=1, cover_asset_id=a2.id)
+    db.add_all([sec1, sec2])
+    db.flush()
+
+    db.add(LookbookSectionItem(section_id=sec1.id, asset_id=a1.id, sort_order=0, source="system", is_cover=True))
+    db.add(LookbookSectionItem(section_id=sec2.id, asset_id=a2.id, sort_order=0, source="system", is_cover=True))
+    db.flush()
+
+    client.post(f"/lookbooks/{lb_id}/publish", headers={"Authorization": f"Bearer {editor_token}"})
+    client.post(
+        f"/lookbooks/{lb_id}/access",
+        json={"user_id": str(buyer_user.id)},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    buyer_token = create_access_token(str(buyer_user.id))
+    response = client.get(
+        f"/my/lookbooks/{lb_id}/items",
+        headers={"Authorization": f"Bearer {buyer_token}"},
+    )
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 2
+    sort_orders = [item["sort_order"] for item in items]
+    assert sort_orders == [0, 1], f"Expected global sequential sort_order, got {sort_orders}"
+
+
+def test_buyer_sees_legacy_and_section_items_merged(client, admin_token, editor_token, buyer_user, sample_asset, db, sample_product):
+    """Buyer endpoint merges section items with legacy items not already in sections."""
+    from app.assets.models import LookbookProductSection, LookbookSectionItem, LookbookItem
+
+    lb = client.post("/lookbooks", json={"title": "Mixed LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    # Legacy item
+    legacy_asset = Asset(
+        original_uri="s3://b/leg_mixed.jpg", display_uri="s3://b/d_leg_mixed.jpg", thumb_uri="s3://b/t_leg_mixed.jpg",
+        filename="leg_mixed.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add(legacy_asset)
+    db.flush()
+    db.add(LookbookItem(lookbook_id=lb_id, asset_id=legacy_asset.id, sort_order=0))
+    db.flush()
+
+    # Section item
+    sec = LookbookProductSection(lookbook_id=lb_id, product_id=sample_product.id, sort_order=0, cover_asset_id=sample_asset.id)
+    db.add(sec)
+    db.flush()
+    db.add(LookbookSectionItem(section_id=sec.id, asset_id=sample_asset.id, sort_order=0, source="system", is_cover=True))
+    db.flush()
+
+    client.post(f"/lookbooks/{lb_id}/publish", headers={"Authorization": f"Bearer {editor_token}"})
+    client.post(
+        f"/lookbooks/{lb_id}/access",
+        json={"user_id": str(buyer_user.id)},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    buyer_token = create_access_token(str(buyer_user.id))
+    response = client.get(
+        f"/my/lookbooks/{lb_id}/items",
+        headers={"Authorization": f"Bearer {buyer_token}"},
+    )
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 2
+    asset_ids = [item["asset_id"] for item in items]
+    assert str(sample_asset.id) in asset_ids
+    assert str(legacy_asset.id) in asset_ids
+
+
+# --- Fix 4: Section CRUD tests ---
+
+
+def test_delete_section_removes_section_and_items(client, editor_token, seeded_section_with_two_items):
+    """DELETE /sections/{id} removes the section and all its items."""
+    data = seeded_section_with_two_items
+    response = client.delete(
+        f"/lookbooks/{data['lookbook_id']}/sections/{data['section_id']}",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 204
+
+    sections = client.get(
+        f"/lookbooks/{data['lookbook_id']}/sections",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    ).json()
+    assert len(sections) == 0
+
+
+def test_add_section_items_appends_manual_items(client, editor_token, seeded_section_with_two_items, db):
+    """POST /sections/{id}/items adds new manual items to a section."""
+    data = seeded_section_with_two_items
+    new_asset = Asset(
+        original_uri="s3://b/new_item.jpg", display_uri="s3://b/d_new.jpg", thumb_uri="s3://b/t_new.jpg",
+        filename="new.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add(new_asset)
+    db.flush()
+
+    response = client.post(
+        f"/lookbooks/{data['lookbook_id']}/sections/{data['section_id']}/items",
+        json={"asset_ids": [str(new_asset.id)]},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 3
+    added = [i for i in body["items"] if i["asset_id"] == str(new_asset.id)]
+    assert len(added) == 1
+    assert added[0]["source"] == "manual"
+    assert added[0]["is_cover"] is False

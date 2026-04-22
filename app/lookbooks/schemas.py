@@ -67,7 +67,11 @@ class LookbookSectionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     lookbook_id: uuid.UUID
-    product_id: uuid.UUID
+    product_id: uuid.UUID | None
     sort_order: int
     cover_asset_id: uuid.UUID | None
     items: list[LookbookSectionItemOut] = []
+
+
+class LookbookSectionItemAdd(BaseModel):
+    asset_ids: list[uuid.UUID]

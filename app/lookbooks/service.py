@@ -191,13 +191,28 @@ def list_sections(db: Session, lb_id: uuid.UUID) -> list[LookbookProductSection]
 
 def flattened_buyer_items(db: Session, lb_id: uuid.UUID) -> list[dict]:
     payload: list[dict] = []
+    section_asset_ids: set[str] = set()
+    global_order = 0
+
     for section in list_sections(db, lb_id):
         for item in section.items:
             payload.append({
                 "asset_id": str(item.asset_id),
-                "sort_order": item.sort_order,
+                "sort_order": global_order,
                 "note": item.note,
             })
+            section_asset_ids.add(str(item.asset_id))
+            global_order += 1
+
+    for item in get_lookbook_items(db, lb_id):
+        if str(item.asset_id) not in section_asset_ids:
+            payload.append({
+                "asset_id": str(item.asset_id),
+                "sort_order": global_order,
+                "note": item.note,
+            })
+            global_order += 1
+
     return payload
 
 
@@ -226,3 +241,50 @@ def remove_section_item(db: Session, section_id: uuid.UUID, asset_id: uuid.UUID)
             remaining[0].is_cover = True
             section.cover_asset_id = remaining[0].asset_id
     db.flush()
+
+
+def remove_section(db: Session, section_id: uuid.UUID) -> bool:
+    section = db.get(LookbookProductSection, section_id)
+    if not section:
+        return False
+    db.query(LookbookSectionItem).filter(LookbookSectionItem.section_id == section_id).delete()
+    db.delete(section)
+    db.flush()
+    return True
+
+
+def add_section_items(db: Session, section_id: uuid.UUID, asset_ids: list[uuid.UUID]) -> LookbookProductSection:
+    section = db.get(LookbookProductSection, section_id)
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    existing = set(
+        row[0] for row in
+        db.query(LookbookSectionItem.asset_id)
+        .filter(LookbookSectionItem.section_id == section_id)
+        .all()
+    )
+
+    next_sort = db.query(func.coalesce(func.max(LookbookSectionItem.sort_order), -1)).filter(
+        LookbookSectionItem.section_id == section_id
+    ).scalar() + 1
+
+    for asset_id in asset_ids:
+        if asset_id not in existing:
+            db.add(LookbookSectionItem(
+                section_id=section_id,
+                asset_id=asset_id,
+                sort_order=next_sort,
+                source="manual",
+                is_cover=False,
+            ))
+            next_sort += 1
+
+    db.flush()
+    section.items = (
+        db.query(LookbookSectionItem)
+        .filter(LookbookSectionItem.section_id == section_id)
+        .order_by(LookbookSectionItem.sort_order.asc())
+        .all()
+    )
+    return section
