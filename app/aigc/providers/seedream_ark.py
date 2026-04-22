@@ -28,7 +28,11 @@ class SeedreamArkProvider:
         prompt: str,
         image_data_urls: list[str],
         resolution: str = "2K",
+        candidate_count: int = 1,
     ) -> dict:
+        # Ark SDK (recent versions) no longer accepts `n` in images.generate.
+        # Keep candidate_count in signature for provider interface compatibility.
+        _ = max(1, int(candidate_count))
         return {
             "model": self._model_name,
             "prompt": prompt,
@@ -46,17 +50,15 @@ class SeedreamArkProvider:
         prompt: str,
         image_data_urls: list[str],
         resolution: str = "2K",
+        candidate_count: int = 1,
     ) -> list[bytes]:
-        resp = self._client.images.generate(
-            model=self._model_name,
+        payload = self.build_request_payload(
             prompt=prompt,
-            image=image_data_urls,
-            response_format="url",
-            size=resolution,
-            sequential_image_generation="disabled",
-            stream=False,
-            watermark=True,
+            image_data_urls=image_data_urls,
+            resolution=resolution,
+            candidate_count=candidate_count,
         )
+        resp = self._client.images.generate(**payload)
         urls = [item.url for item in resp.data]
         return self._download_images(urls)
 

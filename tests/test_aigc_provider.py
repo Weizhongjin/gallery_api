@@ -14,6 +14,7 @@ def test_build_request_payload():
         prompt="virtual try-on",
         image_data_urls=["data:image/jpeg;base64,aaa", "data:image/jpeg;base64,bbb"],
         resolution="2K",
+        candidate_count=3,
     )
     assert payload["model"] == "doubao-seedream-4-5-251128"
     assert payload["size"] == "2K"
@@ -48,6 +49,9 @@ def test_generate_downloads_images(mock_get):
         prompt="virtual try-on",
         image_data_urls=["data:image/jpeg;base64,aaa"],
         resolution="2K",
+        candidate_count=2,
     )
     assert len(results) == 1
     assert results[0] == b"\xff\xd8fake-jpeg-data"
+    provider._client.images.generate.assert_called_once()
+    assert "n" not in provider._client.images.generate.call_args.kwargs
