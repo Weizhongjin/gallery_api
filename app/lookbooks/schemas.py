@@ -47,3 +47,27 @@ class AccessOut(BaseModel):
     user_id: uuid.UUID
     granted_by: uuid.UUID
     granted_at: datetime
+
+
+class LookbookSectionCreateFromProduct(BaseModel):
+    product_id: uuid.UUID
+
+
+class LookbookSectionItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    asset_id: uuid.UUID
+    sort_order: int
+    source: str
+    is_cover: bool
+    note: str | None = None
+
+
+class LookbookSectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    lookbook_id: uuid.UUID
+    product_id: uuid.UUID
+    sort_order: int
+    cover_asset_id: uuid.UUID | None
+    items: list[LookbookSectionItemOut] = []

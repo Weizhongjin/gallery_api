@@ -12,11 +12,15 @@ from app.lookbooks.schemas import (
     LookbookItemIn,
     LookbookItemOut,
     LookbookOut,
+    LookbookSectionCreateFromProduct,
+    LookbookSectionOut,
     LookbookUpdate,
 )
 from app.lookbooks.service import (
-    add_item, create_lookbook, get_buyer_lookbooks, get_lookbook_items,
-    grant_access, list_access, list_lookbooks, remove_item, revoke_access, set_published, update_lookbook,
+    add_item, add_product_section, create_lookbook, flattened_buyer_items,
+    get_buyer_lookbooks, get_lookbook_items,
+    grant_access, list_access, list_lookbooks, list_sections, remove_item, remove_section_item,
+    revoke_access, set_published, update_lookbook,
 )
 
 router = APIRouter(tags=["lookbooks"])
@@ -135,6 +139,31 @@ def list_acc(
     return list_access(db, lb_id)
 
 
+# --- Section editor APIs ---
+
+@router.get("/lookbooks/{lb_id}/sections", response_model=list[LookbookSectionOut])
+def get_sections(
+    lb_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
+):
+    return list_sections(db, lb_id)
+
+
+@router.post(
+    "/lookbooks/{lb_id}/sections/products",
+    response_model=LookbookSectionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_product_section_route(
+    lb_id: uuid.UUID,
+    body: LookbookSectionCreateFromProduct,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    return add_product_section(db, lb_id, body.product_id)
+
+
 # --- Buyer view ---
 
 @router.get("/my/lookbooks", response_model=list[LookbookOut])
@@ -156,4 +185,23 @@ def my_lookbook_items(
     if not access:
         raise HTTPException(status_code=403, detail="No access to this lookbook")
     items = get_lookbook_items(db, lb_id)
+    section_items = flattened_buyer_items(db, lb_id)
+    if section_items:
+        return section_items
     return [{"asset_id": str(i.asset_id), "sort_order": i.sort_order, "note": i.note} for i in items]
+
+
+# --- Section item management ---
+
+@router.delete(
+    "/lookbooks/{lb_id}/sections/{section_id}/items/{asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_section_item_route(
+    lb_id: uuid.UUID,
+    section_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    remove_section_item(db, section_id, asset_id)

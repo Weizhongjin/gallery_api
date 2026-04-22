@@ -1,7 +1,19 @@
 import uuid
+from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.assets.models import Lookbook, LookbookAccess, LookbookItem
+from app.assets.models import (
+    Asset, AssetProduct, Lookbook, LookbookAccess, LookbookItem,
+    LookbookProductSection, LookbookSectionItem,
+)
+
+_ROLE_PRIORITY = {
+    "flatlay_primary": 1,
+    "manual": 2,
+    "model_ref": 3,
+    "advertising_ref": 4,
+}
 
 
 def create_lookbook(db: Session, title: str, created_by: uuid.UUID, cover_asset_id: uuid.UUID | None = None) -> Lookbook:
@@ -93,3 +105,124 @@ def get_lookbook_items(db: Session, lb_id: uuid.UUID) -> list[LookbookItem]:
         .order_by(LookbookItem.sort_order)
         .all()
     )
+
+
+def _recommended_product_assets(db: Session, product_id: uuid.UUID, limit: int = 3) -> list[tuple[Asset, AssetProduct]]:
+    rows = (
+        db.query(Asset, AssetProduct)
+        .join(AssetProduct, AssetProduct.asset_id == Asset.id)
+        .filter(AssetProduct.product_id == product_id)
+        .all()
+    )
+    ranked = sorted(
+        rows,
+        key=lambda row: (
+            _ROLE_PRIORITY.get(row[1].relation_role.value, 99),
+            row[0].filename,
+            str(row[0].id),
+        ),
+    )
+    return ranked[:limit]
+
+
+def add_product_section(db: Session, lookbook_id: uuid.UUID, product_id: uuid.UUID) -> LookbookProductSection:
+    existing = (
+        db.query(LookbookProductSection)
+        .filter(LookbookProductSection.lookbook_id == lookbook_id, LookbookProductSection.product_id == product_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Product already exists in this lookbook")
+
+    recommended = _recommended_product_assets(db, product_id)
+    if not recommended:
+        raise HTTPException(status_code=422, detail="该商品暂无关联图片，暂时不能加入画册")
+
+    next_sort = db.query(func.coalesce(func.max(LookbookProductSection.sort_order), -1)).filter(
+        LookbookProductSection.lookbook_id == lookbook_id
+    ).scalar() + 1
+
+    section = LookbookProductSection(
+        lookbook_id=lookbook_id,
+        product_id=product_id,
+        sort_order=next_sort,
+        cover_asset_id=recommended[0][0].id,
+    )
+    db.add(section)
+    db.flush()
+
+    for index, (asset, _) in enumerate(recommended):
+        db.add(
+            LookbookSectionItem(
+                section_id=section.id,
+                asset_id=asset.id,
+                sort_order=index,
+                source="system",
+                is_cover=index == 0,
+            )
+        )
+
+    db.flush()
+    section.items = (
+        db.query(LookbookSectionItem)
+        .filter(LookbookSectionItem.section_id == section.id)
+        .order_by(LookbookSectionItem.sort_order.asc())
+        .all()
+    )
+    return section
+
+
+def list_sections(db: Session, lb_id: uuid.UUID) -> list[LookbookProductSection]:
+    sections = (
+        db.query(LookbookProductSection)
+        .filter(LookbookProductSection.lookbook_id == lb_id)
+        .order_by(LookbookProductSection.sort_order.asc(), LookbookProductSection.created_at.asc())
+        .all()
+    )
+    for section in sections:
+        section.items = (
+            db.query(LookbookSectionItem)
+            .filter(LookbookSectionItem.section_id == section.id)
+            .order_by(LookbookSectionItem.sort_order.asc(), LookbookSectionItem.created_at.asc())
+            .all()
+        )
+    return sections
+
+
+def flattened_buyer_items(db: Session, lb_id: uuid.UUID) -> list[dict]:
+    payload: list[dict] = []
+    for section in list_sections(db, lb_id):
+        for item in section.items:
+            payload.append({
+                "asset_id": str(item.asset_id),
+                "sort_order": item.sort_order,
+                "note": item.note,
+            })
+    return payload
+
+
+def remove_section_item(db: Session, section_id: uuid.UUID, asset_id: uuid.UUID) -> None:
+    item = (
+        db.query(LookbookSectionItem)
+        .filter(LookbookSectionItem.section_id == section_id, LookbookSectionItem.asset_id == asset_id)
+        .first()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Section item not found")
+    db.delete(item)
+    db.flush()
+
+    remaining = (
+        db.query(LookbookSectionItem)
+        .filter(LookbookSectionItem.section_id == section_id)
+        .order_by(LookbookSectionItem.sort_order.asc(), LookbookSectionItem.created_at.asc())
+        .all()
+    )
+    section = db.get(LookbookProductSection, section_id)
+    if section:
+        if not remaining:
+            section.cover_asset_id = None
+        else:
+            remaining[0].is_cover = True
+            section.cover_asset_id = remaining[0].asset_id
+    db.flush()
