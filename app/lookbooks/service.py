@@ -216,7 +216,10 @@ def flattened_buyer_items(db: Session, lb_id: uuid.UUID) -> list[dict]:
     return payload
 
 
-def remove_section_item(db: Session, section_id: uuid.UUID, asset_id: uuid.UUID) -> None:
+def remove_section_item(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID, asset_id: uuid.UUID) -> None:
+    section = db.get(LookbookProductSection, section_id)
+    if not section or section.lookbook_id != lookbook_id:
+        raise HTTPException(status_code=404, detail="Section not found")
     item = (
         db.query(LookbookSectionItem)
         .filter(LookbookSectionItem.section_id == section_id, LookbookSectionItem.asset_id == asset_id)
@@ -243,9 +246,9 @@ def remove_section_item(db: Session, section_id: uuid.UUID, asset_id: uuid.UUID)
     db.flush()
 
 
-def remove_section(db: Session, section_id: uuid.UUID) -> bool:
+def remove_section(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID) -> bool:
     section = db.get(LookbookProductSection, section_id)
-    if not section:
+    if not section or section.lookbook_id != lookbook_id:
         return False
     db.query(LookbookSectionItem).filter(LookbookSectionItem.section_id == section_id).delete()
     db.delete(section)
@@ -253,9 +256,9 @@ def remove_section(db: Session, section_id: uuid.UUID) -> bool:
     return True
 
 
-def add_section_items(db: Session, section_id: uuid.UUID, asset_ids: list[uuid.UUID]) -> LookbookProductSection:
+def add_section_items(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID, asset_ids: list[uuid.UUID]) -> LookbookProductSection:
     section = db.get(LookbookProductSection, section_id)
-    if not section:
+    if not section or section.lookbook_id != lookbook_id:
         raise HTTPException(status_code=404, detail="Section not found")
 
     existing = set(

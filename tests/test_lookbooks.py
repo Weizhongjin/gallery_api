@@ -634,3 +634,93 @@ def test_add_section_items_appends_manual_items(client, editor_token, seeded_sec
     assert len(added) == 1
     assert added[0]["source"] == "manual"
     assert added[0]["is_cover"] is False
+
+
+# --- Round 2 fixes ---
+
+
+def test_mixed_legacy_and_real_sections_both_visible_in_editor(client, editor_token, sample_asset, db, sample_product):
+    """Legacy items not covered by any section still appear alongside real sections."""
+    from app.assets.models import LookbookProductSection, LookbookSectionItem, LookbookItem
+
+    lb = client.post("/lookbooks", json={"title": "Mixed Editor LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    # Add a legacy item
+    legacy_asset = Asset(
+        original_uri="s3://b/leg_mix2.jpg", display_uri="s3://b/d_leg_mix2.jpg", thumb_uri="s3://b/t_leg_mix2.jpg",
+        filename="leg_mix2.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add(legacy_asset)
+    db.flush()
+    db.add(LookbookItem(lookbook_id=lb_id, asset_id=legacy_asset.id, sort_order=0))
+    db.flush()
+
+    # Add a real section
+    sec = LookbookProductSection(lookbook_id=lb_id, product_id=sample_product.id, sort_order=0, cover_asset_id=sample_asset.id)
+    db.add(sec)
+    db.flush()
+    db.add(LookbookSectionItem(section_id=sec.id, asset_id=sample_asset.id, sort_order=0, source="system", is_cover=True))
+    db.flush()
+
+    response = client.get(
+        f"/lookbooks/{lb_id}/sections",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # Should have 2 sections: the real one + legacy fallback for uncovered item
+    assert len(body) == 2
+    product_sections = [s for s in body if s["product_id"] is not None]
+    legacy_sections = [s for s in body if s["product_id"] is None]
+    assert len(product_sections) == 1
+    assert len(legacy_sections) == 1
+    assert len(legacy_sections[0]["items"]) == 1
+    assert legacy_sections[0]["items"][0]["asset_id"] == str(legacy_asset.id)
+
+
+def test_section_mutation_rejects_wrong_lookbook(client, editor_token, db, sample_product, sample_asset):
+    """Section mutations must validate section belongs to the lookbook in the path."""
+    from app.assets.models import LookbookProductSection, LookbookSectionItem
+
+    # Create two lookbooks
+    lb1 = client.post("/lookbooks", json={"title": "LB1"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb2 = client.post("/lookbooks", json={"title": "LB2"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb1_id, lb2_id = lb1.json()["id"], lb2.json()["id"]
+
+    # Add section to lb1
+    sec = LookbookProductSection(lookbook_id=lb1_id, product_id=sample_product.id, sort_order=0, cover_asset_id=sample_asset.id)
+    db.add(sec)
+    db.flush()
+    db.add(LookbookSectionItem(section_id=sec.id, asset_id=sample_asset.id, sort_order=0, source="system", is_cover=True))
+    db.flush()
+    sec_id = str(sec.id)
+
+    # Try to delete section via lb2's path — should 404
+    resp = client.delete(
+        f"/lookbooks/{lb2_id}/sections/{sec_id}",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert resp.status_code == 404
+
+    # Try to add items to section via lb2's path — should 404
+    new_asset = Asset(
+        original_uri="s3://b/wrong_lb.jpg", display_uri="s3://b/d_wrong.jpg", thumb_uri="s3://b/t_wrong.jpg",
+        filename="wrong.jpg", width=100, height=100, file_size=512, feature_status={},
+    )
+    db.add(new_asset)
+    db.flush()
+
+    resp = client.post(
+        f"/lookbooks/{lb2_id}/sections/{sec_id}/items",
+        json={"asset_ids": [str(new_asset.id)]},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert resp.status_code == 404
+
+    # Try to remove section item via lb2's path — should 404
+    resp = client.delete(
+        f"/lookbooks/{lb2_id}/sections/{sec_id}/items/{str(sample_asset.id)}",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert resp.status_code == 404

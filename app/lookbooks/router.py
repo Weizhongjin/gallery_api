@@ -151,28 +151,35 @@ def get_sections(
     _: User = Depends(require_role(UserRole.admin, UserRole.editor, UserRole.viewer)),
 ):
     sections = list_sections(db, lb_id)
-    if sections:
-        return sections
+
+    covered_asset_ids: set[str] = set()
+    for section in sections:
+        for item in section.items:
+            covered_asset_ids.add(str(item.asset_id))
 
     legacy = get_lookbook_items(db, lb_id)
-    if not legacy:
-        return []
+    uncovered = [item for item in legacy if str(item.asset_id) not in covered_asset_ids]
 
-    return [LookbookSectionOut(
-        id=uuid.uuid5(uuid.NAMESPACE_URL, f"legacy:{lb_id}"),
-        lookbook_id=lb_id,
-        product_id=None,
-        sort_order=0,
-        cover_asset_id=legacy[0].asset_id,
-        items=[LookbookSectionItemOut(
-            id=uuid.uuid5(uuid.NAMESPACE_URL, f"legacy-item:{item.asset_id}"),
-            asset_id=item.asset_id,
-            sort_order=i,
-            source="legacy",
-            is_cover=i == 0,
-            note=item.note,
-        ) for i, item in enumerate(legacy)],
-    )]
+    result: list = list(sections)
+
+    if uncovered:
+        result.append(LookbookSectionOut(
+            id=uuid.uuid5(uuid.NAMESPACE_URL, f"legacy:{lb_id}"),
+            lookbook_id=lb_id,
+            product_id=None,
+            sort_order=len(sections),
+            cover_asset_id=uncovered[0].asset_id,
+            items=[LookbookSectionItemOut(
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"legacy-item:{item.asset_id}"),
+                asset_id=item.asset_id,
+                sort_order=i,
+                source="legacy",
+                is_cover=i == 0,
+                note=item.note,
+            ) for i, item in enumerate(uncovered)],
+        ))
+
+    return result
 
 
 @router.post(
@@ -199,7 +206,7 @@ def delete_section_route(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
-    if not remove_section(db, section_id):
+    if not remove_section(db, lb_id, section_id):
         raise HTTPException(status_code=404, detail="Section not found")
 
 
@@ -214,7 +221,7 @@ def add_items_route(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
-    return add_section_items(db, section_id, body.asset_ids)
+    return add_section_items(db, lb_id, section_id, body.asset_ids)
 
 
 # --- Buyer view ---
@@ -253,4 +260,4 @@ def delete_section_item_route(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
-    remove_section_item(db, section_id, asset_id)
+    remove_section_item(db, lb_id, section_id, asset_id)
