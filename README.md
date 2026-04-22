@@ -1,72 +1,77 @@
-# Gallery API（定版）
+# Gallery API
 
-Gallery API 是一个面向服饰图片资产的后端服务，定位为：
-- 内部：资产管理与 AI 治理中台（导入、打标、检索、重处理）
-- 外部：为精选发布集合（Lookbook）提供受控访问能力
+服饰图库后端服务，负责资产管理、商品关联、标签治理、检索、画册发布，以及 AIGC 任务编排与执行。
 
-当前技术栈：
+## 当前版本
+
+- 当前封版标签：`release1.2`
+- 当前主要分支：`feature/aigc-nano-banana-ideas`
+- 最近更新时间：`2026-04-22`
+- Swagger UI：`http://127.0.0.1:8000/docs`
+- OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
+
+中文接口文档：
+
+- [docs/API接口文档.md](docs/API接口文档.md)
+
+本次封版摘要：
+
+- AIGC 生成与优化链路稳定化
+- 资产上传 / 资产商品关联接口补齐
+- lookbook section 编辑模型与兼容层完善
+- Celery 队列与 Ark key 兼容配置补齐
+
+## 技术栈
+
 - FastAPI
 - PostgreSQL + pgvector
-- MinIO / S3 / TOS（对象存储）
-- Redis + Celery（可选异步）
-- VLM + Embedding（HTTP 调用外部模型服务）
-
-## 当前定版信息
-
-- 定版日期：2026-04-18
-- 版本：`1.1.0`（标签：`release1.1`）
-- API 文档入口：
-  - Swagger UI：`http://127.0.0.1:8000/docs`
-  - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
-  - 中文接口文档：[`docs/API接口文档.md`](docs/API接口文档.md)
+- MinIO / S3 / TOS
+- Redis + Celery
+- SQLAlchemy + Alembic
+- 外部 Embedding / VLM / AIGC Provider
 
 ## 主要能力
 
-- 资产上传与批量导入（支持按对象存储前缀批量 ingestion）
-- 图片三种衍生版本管理（original / display / thumb）
-- 资产类型识别（`advertising / flatlay / model_set / unknown`）
-- 商品主数据（`product`）与资产多对多绑定（`asset_product`）
-- 商品销量汇总（`product_sales_summary`）与销售原始数据落库（`sales_order_raw`）
-- 商品统一标签（`product_tag`，由图片标签聚合）
-- Taxonomy 多维标签体系（category/style/color/scene/detail）
-- AI 自动打标 + 人工打标并存（`source=ai|human`）
-- 未命中标签沉淀到 `taxonomy_candidate` 供人工审核提升
-- 向量检索（text/image -> pgvector cosine search）
-- 商品维度检索支持销售筛选（`sales_min / sales_max`）
-- Lookbook 发布与访问授权（buyer 侧只读访问）
-- 任务进度查询（批处理 job）
-
-## 运行规范
-
-- 图片导入运行规范：[`docs/INGESTION_OPERATING_MODEL.md`](docs/INGESTION_OPERATING_MODEL.md)
-- 原始数据存放规范：[`docs/RAW_DATA_SPEC.md`](docs/RAW_DATA_SPEC.md)
-- unresolved 占位 UID 规范：[`docs/UNRESOLVED_PLACEHOLDER_UID_POLICY.md`](docs/UNRESOLVED_PLACEHOLDER_UID_POLICY.md)
+- 资产上传与对象存储批量导入
+- original / display / thumb 三种图片变体管理
+- 资产类型识别与资产商品绑定
+- taxonomy 标签体系与候选标签审核
+- 资产 / 商品双层标签能力
+- 文本检索、属性检索、以图搜图
+- 商品维度聚合检索
+- lookbook 发布、授权与 buyer 访问
+- AIGC 任务创建、候选生成、优化任务派生
+- 任务进度查询与异步任务执行
 
 ## 目录结构
 
 ```text
 gallery-api/
 ├── app/
-│   ├── auth/          # 登录、JWT、角色权限
-│   ├── users/         # 用户管理
-│   ├── assets/        # 资产上传、打标、批处理、重处理
-│   ├── taxonomy/      # 标签树与候选标签管理
-│   ├── lookbooks/     # 精选集合发布与访问授权
-│   ├── search/        # 属性检索与向量检索
-│   ├── jobs/          # 批处理任务查询
-│   ├── ai/            # VLM/Embedding 客户端与处理逻辑
-│   ├── storage.py     # S3/TOS 存储抽象
-│   ├── database.py    # SQLAlchemy session
-│   └── main.py        # FastAPI 入口
-├── alembic/           # 数据库迁移
-├── scripts/           # 维护脚本（如 taxonomy seed）
-├── tests/             # 测试
-└── docker-compose.dev.yml
+│   ├── aigc/                  # AIGC 路由、schema、service、provider
+│   ├── ai/                    # 向量/VLM 客户端
+│   ├── assets/                # 资产上传、打标、绑定、重处理
+│   ├── auth/                  # 认证与 JWT
+│   ├── jobs/                  # 任务进度查询
+│   ├── lookbooks/             # 画册、section 编辑、buyer 访问
+│   ├── products/              # 商品主数据与商品视图接口
+│   ├── search/                # 检索接口
+│   ├── taxonomy/              # 标签树与候选标签
+│   ├── users/                 # 用户管理
+│   ├── celery_app.py          # Celery 配置
+│   ├── config.py              # 环境变量配置
+│   ├── database.py            # DB session
+│   ├── main.py                # FastAPI 入口
+│   └── storage.py             # 对象存储抽象
+├── alembic/                   # 数据库迁移
+├── docs/                      # 接口与运行文档
+├── scripts/                   # 管理脚本
+└── tests/                     # 测试
 ```
 
 ## 快速开始
 
-### 1) 安装依赖
+### 1. 安装依赖
 
 ```bash
 conda activate qiaofei
@@ -74,43 +79,52 @@ cd gallery-api
 pip install -r requirements.txt
 ```
 
-### 2) 配置环境变量
-
-复制并编辑：
+### 2. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-最关键项：
-- `DATABASE_URL`
-- `BUDAN_DATABASE_URL`（用于销售同步）
-- `SECRET_KEY`
-- `S3_*` 或 `TOS_*`
-- `VLM_*`
-- `EMBED_*`
-- `ASYNC_MODE`（`background` 或 `celery`）
-- `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`（`ASYNC_MODE=celery` 时）
+建议至少确认这些变量：
 
-### 3) 启动基础设施
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `STORAGE_PROVIDER`
+- `S3_*` 或 `TOS_*`
+- `EMBED_*`
+- `VLM_*`
+- `ASYNC_MODE`
+- `CELERY_BROKER_URL`
+- `CELERY_RESULT_BACKEND`
+
+和当前版本相关的新兼容点：
+
+- 支持 `VOLC_ARK_API_KEY`
+- 也兼容 `ARK_API_KEY`
+- Celery 队列默认支持：
+  - `celery`
+  - `aigc`
+
+### 3. 启动基础设施
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-可选（本地 embedding 服务）：
+默认会启动：
 
-```bash
-docker compose -f docker-compose.dev.yml --profile ai up -d embedding-svc
-```
+- PostgreSQL：`5432`
+- Redis：`6379`
+- MinIO API：`9000`
+- MinIO Console：`9001`
 
-### 4) 初始化数据库
+### 4. 初始化数据库
 
 ```bash
 alembic upgrade head
 ```
 
-### 5) 启动 API
+### 5. 启动 API
 
 ```bash
 uvicorn app.main:app --reload
@@ -122,18 +136,18 @@ uvicorn app.main:app --reload
 curl http://127.0.0.1:8000/health
 ```
 
-### 6) 启动 Celery Worker（可选）
+### 6. 启动 Celery Worker（可选）
 
-当 `ASYNC_MODE=celery` 时，以下接口会把任务投递到 Redis/Celery worker：
-- `POST /assets/{asset_id}/process`
-- `POST /assets/reprocess`
-- `POST /assets/batch-ingest/storage`
-
-启动命令：
+当 `ASYNC_MODE=celery` 时，建议同时启动 worker：
 
 ```bash
 celery -A app.celery_app.celery_app worker --loglevel=INFO
 ```
+
+当前会使用以下队列：
+
+- 默认队列：`celery`
+- AIGC 队列：`aigc`
 
 ## 常用命令
 
@@ -144,43 +158,101 @@ python scripts/create_admin.py --email admin@example.com --name "Admin" --passwo
 # 初始化 taxonomy
 python scripts/seed_taxonomy.py
 
-# 运行测试
+# 运行全量测试
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
   python -m pytest tests/ -v
 ```
 
-## 核心接口（摘要）
+## 关键模块说明
+
+### 1. Assets
+
+提供：
+
+- 上传资产
+- 列表查询
+- 标签维护
+- 资产商品绑定
+- 重处理 / 批处理
+
+当前封版新增点：
+
+- `POST /assets/upload` 支持 `asset_type`
+- 资产商品关系返回中包含 `product_id`
+
+### 2. Search
+
+支持：
+
+- 资产维度检索
+- 商品维度聚合检索
+- 语义检索
+- 以图搜图
+
+### 3. Lookbooks
+
+支持：
+
+- 画册创建与发布
+- buyer 授权访问
+- section-based 编辑接口
+- legacy `lookbook_item` 兼容显示
+
+当前封版新增点：
+
+- product-driven section editor API
+- section 删除 / 补图接口
+- mutation path 与 `lookbook_id` 一致性校验
+- buyer 端 section flatten 兼容输出
+
+### 4. AIGC
+
+支持：
+
+- 创建 AIGC 任务
+- 生成候选图
+- 基于已有候选继续发起优化任务
+- provider 请求兼容当前 Ark SDK 行为
+
+当前封版新增点：
+
+- provider 不再使用 Ark 已废弃的 `n`
+- 保留 `candidate_count` 接口兼容层
+
+## 核心接口摘要
 
 ### Auth / Users
+
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /users`
 
 ### Assets
+
 - `POST /assets/upload`
-- `POST /assets/batch-ingest/storage`
 - `GET /assets`
 - `GET /assets/{asset_id}`
+- `GET /assets/{asset_id}/file`
 - `GET /assets/{asset_id}/products`
 - `POST /assets/{asset_id}/products/bind`
 - `DELETE /assets/{asset_id}/products/{product_code}`
 - `PATCH /assets/{asset_id}/tags`
 - `POST /assets/{asset_id}/process`
 - `POST /assets/reprocess`
+- `POST /assets/batch-ingest/storage`
 
 ### Products
+
 - `POST /products/upsert`
 - `GET /products`
 - `GET /products/{product_id}`
-- `PATCH /products/{product_id}`
 - `GET /products/{product_id}/assets`
 - `GET /products/{product_id}/tags`
 - `PATCH /products/{product_id}/tags`
-- `POST /products/{product_id}/tags/rebuild`
-- `GET /products/admin/unresolved-assets`
 - `POST /products/admin/sales/sync`
 
 ### Taxonomy
+
 - `GET /taxonomy`
 - `POST /taxonomy/nodes`
 - `PATCH /taxonomy/nodes/{node_id}`
@@ -189,6 +261,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `POST /taxonomy/candidates/{candidate_id}/promote`
 
 ### Search
+
 - `GET /search`
 - `POST /search/semantic`
 - `POST /search/vector`
@@ -196,142 +269,79 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `POST /search/products/semantic`
 - `POST /search/products/vector`
 
-商品维度检索支持以下商品侧过滤参数：
-- `q`
-- `year_from / year_to`
-- `list_price_min / list_price_max`
-- `sales_min / sales_max`
-
-### 商品维度检索（新增）
-
-检索默认基础单元仍是 `asset`，但新增了商品维度聚合接口，适配运营端商品检索体验：
-
-- `GET /search/products`
-  - 入参与 `GET /search` 一致：`tag_ids[] / dimension / asset_type / page / page_size`
-  - 出参按 `product` 聚合，返回商品码、封面图、匹配原因、匹配图片数
-- `POST /search/products/semantic`
-  - 入参：`{ text, limit, page, page_size }`
-  - 先做向量召回，再按商品聚合
-- `POST /search/products/vector`
-  - 入参：图片文件（`multipart/form-data`），可选 `page/page_size/limit`
-  - 先做向量召回，再按商品聚合
-
-商品维度检索结果核心字段：
-
-- `product_id`
-- `product_code`
-- `name`
-- `score`
-- `match_reasons`（`attribute | semantic | vector`）
-- `cover_asset_id / cover_thumb_uri / cover_display_uri`
-- `matched_asset_count`
-
 ### Lookbooks
+
 - `POST /lookbooks`
 - `POST /lookbooks/{lb_id}/publish`
 - `POST /lookbooks/{lb_id}/access`
+- `GET /lookbooks/{lb_id}/sections`
+- `POST /lookbooks/{lb_id}/sections/products`
+- `POST /lookbooks/{lb_id}/sections/{section_id}/items`
+- `DELETE /lookbooks/{lb_id}/sections/{section_id}`
+- `DELETE /lookbooks/{lb_id}/sections/{section_id}/items/{asset_id}`
 - `GET /my/lookbooks`
+- `GET /my/lookbooks/{lb_id}/items`
+
+### AIGC
+
+- `POST /aigc/tasks`
+- `GET /aigc/tasks`
+- `GET /aigc/tasks/{task_id}`
+- `POST /aigc/tasks/{task_id}/approve`
+- `POST /aigc/tasks/{task_id}/reject`
+- `POST /aigc/tasks/{task_id}/optimize`
 
 ### Jobs
+
 - `GET /jobs/{job_id}`
 
-## 同步/异步调用约定
+## 测试建议
 
-接口分为两类：
+常用回归组合：
 
-- 同步接口：直接返回业务结果（通常 `200/201`）
-- 异步接口：返回任务受理结果（`202 + job_id`），随后轮询 `GET /jobs/{job_id}`
-
-当前异步接口（建议前端统一按 job 处理）：
-
-- `POST /assets/{asset_id}/process`
-- `POST /assets/reprocess`
-- `POST /assets/batch-ingest/storage`
-
-## 销售数据同步（v1.1）
-
-用于把布单库（`budan.orders`）同步进 gallery：
-
-- 原始订单写入：`sales_order_raw`（按 `source + source_order_id` 幂等 upsert）
-- 商品销量汇总写入：`product_sales_summary`
-
-触发方式：
-
-- API：`POST /products/admin/sales/sync`（需要 `admin/editor`）
-- 脚本：`python scripts/sync_sales_from_budan.py`
-
-异步接口返回示例：
-
-```json
-{
-  "job_id": "9f58e6d6-fdc1-487f-9fdb-2b2ea32934af",
-  "stages": ["classify", "embed"]
-}
+```bash
+conda run -n qiaofei pytest tests/test_aigc_provider.py tests/test_assets.py tests/test_lookbooks.py -q
+conda run -n qiaofei pytest tests/test_aigc_api.py tests/test_aigc_celery.py -q
 ```
 
-`GET /jobs/{job_id}` 返回示例：
+## 相关文档
 
-```json
-{
-  "id": "9f58e6d6-fdc1-487f-9fdb-2b2ea32934af",
-  "status": "running",
-  "stages": ["classify", "embed"],
-  "total": 2340,
-  "processed": 1200,
-  "failed_count": 8,
-  "completed": 1208,
-  "remaining": 1132,
-  "progress_pct": 51.62,
-  "elapsed_seconds": 942,
-  "throughput_items_per_min": 76.93,
-  "eta_seconds": 883
-}
-```
+- [API接口文档](docs/API接口文档.md)
+- [INGESTION_OPERATING_MODEL](docs/INGESTION_OPERATING_MODEL.md)
+- [RAW_DATA_SPEC](docs/RAW_DATA_SPEC.md)
+- [UNRESOLVED_PLACEHOLDER_UID_POLICY](docs/UNRESOLVED_PLACEHOLDER_UID_POLICY.md)
+- [release1.2 PR 摘要](docs/PR_RELEASE_1.2.md)
 
-字段说明：
+## 常见问题
 
-- `status`: `pending | running | done | failed`
-- `completed`: `processed + failed_count`
-- `progress_pct`: 进度百分比（0-100）
-- `throughput_items_per_min`: 当前平均处理速率（每分钟）
-- `eta_seconds`: 预计剩余秒数（无法估算时为 `null`）
+### 1. `/assets/upload` 返回失败
 
-## 数据模型（核心表）
+优先检查：
 
-- `asset`: 图片主记录与特征状态
-- `product`: 商品主记录（价格等业务字段）
-- `asset_product`: 资产-商品多对多关系
-- `product_tag`: 商品层统一标签（human/aggregated）
-- `image_group`: 资产分组
-- `taxonomy_node`: 标签树节点
-- `taxonomy_candidate`: AI 未命中候选标签
-- `asset_tag`: 资产-标签多对多关系
-- `asset_embedding`: 向量记录（`vector(768)`）
-- `lookbook / lookbook_item / lookbook_access`: 发布集合与授权
-- `processing_job`: 批处理任务进度
-- `user`: 用户与角色
+1. 对象存储是否可写
+2. `STORAGE_PROVIDER` 配置是否正确
+3. 上传文件是否为可处理图片
 
-## 角色与权限
+### 2. 前端能打开但 API 都失败
 
-- `admin`: 全量管理
-- `editor`: 资产与发布编辑
-- `viewer`: 只读查询
-- `buyer`: 只读访问授权 lookbook
+请确认：
 
-## 安全说明
+1. API 已运行在 `127.0.0.1:8000`
+2. 前端开发代理已生效
+3. 登录 token 仍有效
 
-- `.env` 不应提交到 Git（仓库已忽略）
-- `.env.example` 仅保留占位值，不放真实密钥
-- 建议定期轮换模型与存储密钥
+### 3. AIGC 任务创建时报 provider 参数错误
 
-## 当前状态说明
+当前版本已经兼容 Ark SDK 不接受 `n` 的行为。如果仍失败，请优先检查：
 
-该仓库已可支撑：
-- 资产导入与治理
-- AI 打标与向量检索
-- 精选集合（Lookbook）发布与访问控制
+1. `VOLC_ARK_API_KEY` / `ARK_API_KEY`
+2. provider base URL
+3. worker / API 是否使用了相同配置
 
-后续可按业务需要继续增强：
-- 发布版本化（release/snapshot）
-- 组织级授权（dealer org）
-- 云边增量同步机制
+### 4. Lookbook legacy 内容为什么是兼容显示而不是直接迁移
+
+当前 `release1.2` 采用的是稳定优先策略：
+
+- 先保证新 editor 可见 legacy 内容
+- 避免编辑器展示会失败的操作
+- 真正的数据迁移可以后续再补专门脚本或迁移流程
