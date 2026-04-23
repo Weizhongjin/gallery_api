@@ -53,6 +53,7 @@ def upsert(
 def list_all(
     q: str | None = None,
     tag_ids: list[uuid.UUID] = Query(default=[]),
+    has_assets: bool = False,
     year_from: int | None = None,
     year_to: int | None = None,
     list_price_min: float | None = None,
@@ -70,6 +71,7 @@ def list_all(
         db,
         q=q,
         tag_ids=tag_ids,
+        has_assets=has_assets,
         year_from=year_from,
         year_to=year_to,
         list_price_min=list_price_min,

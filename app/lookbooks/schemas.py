@@ -75,3 +75,7 @@ class LookbookSectionOut(BaseModel):
 
 class LookbookSectionItemAdd(BaseModel):
     asset_ids: list[uuid.UUID]
+
+
+class LookbookSectionReorderIn(BaseModel):
+    section_ids: list[uuid.UUID]

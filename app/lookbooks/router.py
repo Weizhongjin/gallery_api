@@ -16,13 +16,14 @@ from app.lookbooks.schemas import (
     LookbookSectionItemAdd,
     LookbookSectionItemOut,
     LookbookSectionOut,
+    LookbookSectionReorderIn,
     LookbookUpdate,
 )
 from app.lookbooks.service import (
     add_item, add_product_section, add_section_items, create_lookbook, flattened_buyer_items,
     get_buyer_lookbooks, get_lookbook_items,
     grant_access, list_access, list_lookbooks, list_sections, remove_item, remove_section,
-    remove_section_item,
+    remove_section_item, reorder_sections,
     revoke_access, set_published, update_lookbook,
 )
 
@@ -222,6 +223,19 @@ def add_items_route(
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
     return add_section_items(db, lb_id, section_id, body.asset_ids)
+
+
+@router.patch(
+    "/lookbooks/{lb_id}/sections/reorder",
+    response_model=list[LookbookSectionOut],
+)
+def reorder_sections_route(
+    lb_id: uuid.UUID,
+    body: LookbookSectionReorderIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    return reorder_sections(db, lb_id, body.section_ids)
 
 
 # --- Buyer view ---

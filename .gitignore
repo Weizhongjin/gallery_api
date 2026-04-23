@@ -12,3 +12,5 @@ build/
 *.db
 .worktrees/
 data/
+.omc/
+.runlogs/

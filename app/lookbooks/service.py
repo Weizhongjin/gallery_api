@@ -163,6 +163,8 @@ def add_product_section(db: Session, lookbook_id: uuid.UUID, product_id: uuid.UU
         )
 
     db.flush()
+    db.commit()
+    db.refresh(section)
     section.items = (
         db.query(LookbookSectionItem)
         .filter(LookbookSectionItem.section_id == section.id)
@@ -244,6 +246,7 @@ def remove_section_item(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UU
             remaining[0].is_cover = True
             section.cover_asset_id = remaining[0].asset_id
     db.flush()
+    db.commit()
 
 
 def remove_section(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID) -> bool:
@@ -253,6 +256,7 @@ def remove_section(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID) -
     db.query(LookbookSectionItem).filter(LookbookSectionItem.section_id == section_id).delete()
     db.delete(section)
     db.flush()
+    db.commit()
     return True
 
 
@@ -284,6 +288,8 @@ def add_section_items(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID
             next_sort += 1
 
     db.flush()
+    db.commit()
+    db.refresh(section)
     section.items = (
         db.query(LookbookSectionItem)
         .filter(LookbookSectionItem.section_id == section_id)
@@ -291,3 +297,31 @@ def add_section_items(db: Session, lookbook_id: uuid.UUID, section_id: uuid.UUID
         .all()
     )
     return section
+
+
+def reorder_sections(
+    db: Session,
+    lookbook_id: uuid.UUID,
+    section_ids: list[uuid.UUID],
+) -> list[LookbookProductSection]:
+    sections = (
+        db.query(LookbookProductSection)
+        .filter(LookbookProductSection.lookbook_id == lookbook_id)
+        .order_by(LookbookProductSection.sort_order.asc(), LookbookProductSection.created_at.asc())
+        .all()
+    )
+    existing_ids = [section.id for section in sections]
+
+    if len(section_ids) != len(existing_ids):
+        raise HTTPException(status_code=400, detail="Section reorder payload does not match current lookbook sections")
+    if len(set(section_ids)) != len(section_ids):
+        raise HTTPException(status_code=400, detail="Section reorder payload contains duplicate ids")
+    if set(section_ids) != set(existing_ids):
+        raise HTTPException(status_code=400, detail="Section reorder payload contains invalid section ids")
+
+    sections_by_id = {section.id: section for section in sections}
+    for index, section_id in enumerate(section_ids):
+        sections_by_id[section_id].sort_order = index
+
+    db.commit()
+    return list_sections(db, lookbook_id)

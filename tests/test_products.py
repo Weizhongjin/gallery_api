@@ -136,6 +136,45 @@ def test_list_products_supports_sales_filters(client, admin_token, db):
     assert all(x["product_code"] != "B920002" for x in body["items"])
 
 
+def test_list_products_supports_has_assets_filter(client, admin_token, db):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    linked = Product(product_code="B930001")
+    unlinked = Product(product_code="B930002")
+    asset = Asset(
+        original_uri="s3://bucket/ha-o.jpg",
+        display_uri="s3://bucket/ha-d.jpg",
+        thumb_uri="s3://bucket/ha-t.jpg",
+        filename="B930001.jpg",
+        width=1000,
+        height=1200,
+        file_size=12345,
+        feature_status={"classify": "pending", "embed": "pending"},
+        asset_type=AssetType.flatlay,
+        parse_status=ParseStatus.parsed,
+    )
+    db.add_all([linked, unlinked, asset])
+    db.commit()
+    db.refresh(linked)
+    db.refresh(unlinked)
+    db.refresh(asset)
+
+    db.add(
+        AssetProduct(
+            asset_id=asset.id,
+            product_id=linked.id,
+            relation_role=AssetProductRole.flatlay_primary,
+            source="manual",
+        )
+    )
+    db.commit()
+
+    resp = client.get("/products?page=1&page_size=50&has_assets=true", headers=headers)
+    assert resp.status_code == 200
+    codes = {x["product_code"] for x in resp.json()["items"]}
+    assert "B930001" in codes
+    assert "B930002" not in codes
+
+
 def test_list_products_puts_tmpuid_last(client, admin_token, db):
     headers = {"Authorization": f"Bearer {admin_token}"}
     db.add(Product(product_code="TMPUID-XYZ"))

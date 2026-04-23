@@ -724,3 +724,91 @@ def test_section_mutation_rejects_wrong_lookbook(client, editor_token, db, sampl
         headers={"Authorization": f"Bearer {editor_token}"},
     )
     assert resp.status_code == 404
+
+
+def test_reorder_sections_persists_new_sort_order(client, editor_token, db, sample_product, sample_asset):
+    """Editors can reorder real lookbook sections and keep that order after reload."""
+    from app.assets.models import LookbookProductSection, Product
+
+    lb = client.post("/lookbooks", json={"title": "Reorder LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    second_product = Product(product_code="B999001", name="第二款")
+    db.add(second_product)
+    db.flush()
+
+    first_section = LookbookProductSection(
+        lookbook_id=lb_id,
+        product_id=sample_product.id,
+        sort_order=0,
+        cover_asset_id=sample_asset.id,
+    )
+    second_section = LookbookProductSection(
+        lookbook_id=lb_id,
+        product_id=second_product.id,
+        sort_order=1,
+        cover_asset_id=sample_asset.id,
+    )
+    db.add_all([first_section, second_section])
+    db.commit()
+
+    response = client.patch(
+        f"/lookbooks/{lb_id}/sections/reorder",
+        json={"section_ids": [str(second_section.id), str(first_section.id)]},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [section["id"] for section in body] == [str(second_section.id), str(first_section.id)]
+    assert [section["sort_order"] for section in body] == [0, 1]
+
+    refreshed = client.get(
+        f"/lookbooks/{lb_id}/sections",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert refreshed.status_code == 200
+    refreshed_body = refreshed.json()
+    assert [section["id"] for section in refreshed_body[:2]] == [str(second_section.id), str(first_section.id)]
+
+
+def test_reorder_sections_rejects_missing_or_extra_ids(client, editor_token, db, sample_product, sample_asset):
+    """Reorder payload must match the exact set of real sections for the lookbook."""
+    from app.assets.models import LookbookProductSection, Product
+
+    lb = client.post("/lookbooks", json={"title": "Bad Reorder LB"}, headers={"Authorization": f"Bearer {editor_token}"})
+    lb_id = lb.json()["id"]
+
+    second_product = Product(product_code="B999002", name="第三款")
+    db.add(second_product)
+    db.flush()
+
+    first_section = LookbookProductSection(
+        lookbook_id=lb_id,
+        product_id=sample_product.id,
+        sort_order=0,
+        cover_asset_id=sample_asset.id,
+    )
+    second_section = LookbookProductSection(
+        lookbook_id=lb_id,
+        product_id=second_product.id,
+        sort_order=1,
+        cover_asset_id=sample_asset.id,
+    )
+    db.add_all([first_section, second_section])
+    db.commit()
+
+    response = client.patch(
+        f"/lookbooks/{lb_id}/sections/reorder",
+        json={"section_ids": [str(first_section.id)]},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 400
+    assert "does not match current lookbook sections" in response.json()["detail"]
+
+    response = client.patch(
+        f"/lookbooks/{lb_id}/sections/reorder",
+        json={"section_ids": [str(first_section.id), str(first_section.id)]},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 400
+    assert "duplicate ids" in response.json()["detail"]
