@@ -19,6 +19,94 @@ def db(db_engine):
     connection = db_engine.connect()
     transaction = connection.begin()
     connection.execute(text("ALTER TABLE product ADD COLUMN IF NOT EXISTS year INTEGER"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS workflow_type varchar NOT NULL DEFAULT 'base'"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_task_id uuid NULL"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS source_candidate_id uuid NULL"))
+    connection.execute(text("ALTER TABLE aigc_task ADD COLUMN IF NOT EXISTS optimize_prompt varchar NULL"))
+    connection.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'uq_aigc_task_candidate_task_id_id'
+              ) THEN
+                ALTER TABLE aigc_task_candidate
+                  ADD CONSTRAINT uq_aigc_task_candidate_task_id_id UNIQUE (task_id, id);
+              END IF;
+            END $$;
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_aigc_task_source_task_id_aigc_task'
+              ) THEN
+                ALTER TABLE aigc_task
+                  ADD CONSTRAINT fk_aigc_task_source_task_id_aigc_task
+                  FOREIGN KEY (source_task_id) REFERENCES aigc_task(id);
+              END IF;
+            END $$;
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_aigc_task_source_candidate_id_aigc_task_candidate'
+              ) THEN
+                ALTER TABLE aigc_task
+                  ADD CONSTRAINT fk_aigc_task_source_candidate_id_aigc_task_candidate
+                  FOREIGN KEY (source_candidate_id) REFERENCES aigc_task_candidate(id);
+              END IF;
+            END $$;
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'fk_aigc_task_source_task_source_candidate_pair'
+              ) THEN
+                ALTER TABLE aigc_task
+                  ADD CONSTRAINT fk_aigc_task_source_task_source_candidate_pair
+                  FOREIGN KEY (source_task_id, source_candidate_id)
+                  REFERENCES aigc_task_candidate(task_id, id);
+              END IF;
+            END $$;
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'ck_aigc_task_source_pair_nullity'
+              ) THEN
+                ALTER TABLE aigc_task
+                  ADD CONSTRAINT ck_aigc_task_source_pair_nullity
+                  CHECK (
+                    (source_task_id IS NULL AND source_candidate_id IS NULL)
+                    OR
+                    (source_task_id IS NOT NULL AND source_candidate_id IS NOT NULL)
+                  );
+              END IF;
+            END $$;
+            """
+        )
+    )
     connection.execute(
         text(
             """
@@ -61,11 +149,12 @@ def db(db_engine):
 
 
 from fastapi.testclient import TestClient
-from app.database import get_db
-from app.main import app
 
 @pytest.fixture
 def client(db):
+    from app.database import get_db
+    from app.main import app
+
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app) as c:
         yield c

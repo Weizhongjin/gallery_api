@@ -1,5 +1,6 @@
 import uuid
 from app.celery_app import celery_app
+from app.config import settings
 from app.database import SessionLocal
 from app.ai.vlm_client import get_vlm_client
 from app.ai.embed_client import get_embedding_client
@@ -112,5 +113,36 @@ def celery_ingest_storage_batch(self, job_id: str, keys: list[str], prefix: str,
                 db.commit()
             raise
         raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=settings.aigc_soft_timeout_seconds,
+    time_limit=settings.aigc_hard_timeout_seconds,
+)
+def celery_aigc_generate(self, task_id: str):
+    """Run AIGC image generation for a queued task.
+
+    Uses its own DB session (separate from web process).
+    Respects soft/hard timeouts from config (default 900s/1200s).
+    """
+    from app.aigc.service import run_aigc_generation, mark_aigc_task_failed
+
+    db = SessionLocal()
+    try:
+        run_aigc_generation(db, uuid.UUID(task_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            mark_aigc_task_failed(db, uuid.UUID(task_id), error_code="GENERATION_FAILED")
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
     finally:
         db.close()

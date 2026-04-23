@@ -73,6 +73,7 @@ def list_products(
     *,
     q: str | None = None,
     tag_ids: list[uuid.UUID] | None = None,
+    has_assets: bool = False,
     year_from: int | None = None,
     year_to: int | None = None,
     list_price_min: float | None = None,
@@ -94,6 +95,14 @@ def list_products(
         query = query.filter(
             Product.product_code.ilike(key) | Product.name.ilike(key)
         )
+
+    if has_assets:
+        linked_product_ids = (
+            db.query(AssetProduct.product_id)
+            .distinct()
+            .scalar_subquery()
+        )
+        query = query.filter(Product.id.in_(linked_product_ids))
 
     if tag_ids:
         unique_ids = list(dict.fromkeys(tag_ids))

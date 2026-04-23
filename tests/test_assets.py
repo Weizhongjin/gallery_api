@@ -5,7 +5,7 @@ from PIL import Image
 
 from app.auth.models import User, UserRole
 from app.auth.service import hash_password, create_access_token
-from app.assets.models import Asset
+from app.assets.models import Asset, AssetType
 from app.storage import S3Storage
 
 
@@ -63,6 +63,17 @@ def test_upload_stores_three_variants(client, editor_token, mock_storage):
         headers={"Authorization": f"Bearer {editor_token}"},
     )
     assert mock_storage.upload.call_count == 3
+
+
+def test_upload_asset_accepts_asset_type_query(client, editor_token, mock_storage):
+    image_data = make_jpeg_bytes(600, 900)
+    response = client.post(
+        "/assets/upload?asset_type=model_set",
+        files={"file": ("model-ref.jpg", image_data, "image/jpeg")},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    assert response.status_code == 201
+    assert response.json()["asset_type"] == AssetType.model_set.value
 
 
 def test_upload_requires_auth(client):

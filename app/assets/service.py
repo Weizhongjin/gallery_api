@@ -184,7 +184,12 @@ def _relation_role_for_asset_type(asset_type: AssetType) -> AssetProductRole:
     return AssetProductRole.manual
 
 
-def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
+def upload_asset(
+    db: Session,
+    filename: str,
+    data: bytes,
+    asset_type: AssetType = AssetType.unknown,
+) -> Asset:
     variants = process_image(data)
     storage = get_storage()
 
@@ -202,7 +207,7 @@ def upload_asset(db: Session, filename: str, data: bytes) -> Asset:
         height=variants.original_height,
         file_size=len(data),
         feature_status={"classify": "pending", "embed": "pending"},
-        asset_type=AssetType.unknown,
+        asset_type=asset_type,
         parse_status=ParseStatus.unresolved,
     )
     db.add(asset)
@@ -281,6 +286,7 @@ def list_asset_products(db: Session, asset_id: uuid.UUID) -> list[dict]:
     )
     return [
         {
+            "product_id": str(p.id),
             "product_code": p.product_code,
             "relation_role": ap.relation_role.value,
             "source": ap.source,

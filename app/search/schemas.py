@@ -32,6 +32,7 @@ class ProductSearchItem(BaseModel):
     cover_display_uri: str | None = None
     cover_width: int | None = None
     cover_height: int | None = None
+    cover_asset_type: str | None = None
     matched_asset_count: int = 0
 
 

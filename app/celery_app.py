@@ -1,4 +1,5 @@
 from celery import Celery
+from kombu import Queue
 from app.config import settings
 
 celery_app = Celery(
@@ -16,4 +17,22 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    task_default_queue=settings.celery_default_queue,
+    task_default_routing_key=settings.celery_default_queue,
+    task_queues=(
+        Queue(
+            settings.celery_default_queue,
+            routing_key=settings.celery_default_queue,
+        ),
+        Queue(
+            settings.celery_aigc_queue,
+            routing_key=settings.celery_aigc_queue,
+        ),
+    ),
+    task_routes={
+        "app.ai.tasks.celery_aigc_generate": {
+            "queue": settings.celery_aigc_queue,
+            "routing_key": settings.celery_aigc_queue,
+        },
+    },
 )

@@ -260,6 +260,7 @@ def _aggregate_product_candidates(
                 "cover_display_uri": cover_candidate.display_uri if cover_candidate else None,
                 "cover_width": cover_candidate.width if cover_candidate else None,
                 "cover_height": cover_candidate.height if cover_candidate else None,
+                "cover_asset_type": (cover_candidate.asset_type.value if hasattr(cover_candidate.asset_type, "value") else str(cover_candidate.asset_type)) if cover_candidate and cover_candidate.asset_type else None,
                 "matched_asset_count": matched_asset_count,
             }
         )

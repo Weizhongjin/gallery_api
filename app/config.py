@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -34,6 +35,22 @@ class Settings(BaseSettings):
     async_mode: str = "background"        # "background" | "celery"
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/1"
+    celery_default_queue: str = "celery"
+    celery_aigc_queue: str = "aigc"
+
+    # AIGC provider settings
+    volc_ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    # Support both VOLC_ARK_API_KEY and ARK_API_KEY for compatibility.
+    volc_ark_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VOLC_ARK_API_KEY", "ARK_API_KEY"),
+    )
+    aigc_default_provider: str = "seedream_ark"
+    aigc_model_name: str = "doubao-seedream-4-5-251128"
+    aigc_default_candidate_count: int = 2
+    aigc_provider_timeout_seconds: int = 700
+    aigc_soft_timeout_seconds: int = 900
+    aigc_hard_timeout_seconds: int = 1200
 
     class Config:
         env_file = ".env"

@@ -68,11 +68,12 @@ def reprocess_all(
 @router.post("/upload", response_model=AssetOut, status_code=status.HTTP_201_CREATED)
 def upload(
     file: UploadFile,
+    asset_type: AssetType = Query(default=AssetType.unknown),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*_UPLOAD_ROLES)),
 ):
     data = file.file.read()
-    return upload_asset(db, file.filename or "upload.jpg", data)
+    return upload_asset(db, file.filename or "upload.jpg", data, asset_type=asset_type)
 
 
 @router.get("", response_model=list[AssetOut])

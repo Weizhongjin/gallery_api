@@ -8,6 +8,7 @@ from app.database import Base
 # import all models so Base.metadata includes them
 import app.auth.models  # noqa
 import app.assets.models  # noqa
+import app.aigc.models  # noqa
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

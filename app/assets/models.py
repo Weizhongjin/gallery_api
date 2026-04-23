@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger, Boolean, Date, DateTime, Enum, Float, ForeignKey,
-    Integer, String, func,
+    Integer, String, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -64,6 +64,7 @@ class Asset(Base):
         default=ParseStatus.unresolved,
         server_default=ParseStatus.unresolved.value,
     )
+    is_ai_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -287,6 +288,53 @@ class LookbookAccess(Base):
         UUID(as_uuid=True), ForeignKey("user.id"), nullable=False
     )
     granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LookbookProductSection(Base):
+    __tablename__ = "lookbook_product_section"
+    __table_args__ = (
+        UniqueConstraint("lookbook_id", "product_id", name="uq_lookbook_product_section_lookbook_product"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lookbook_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lookbook.id"), nullable=False, index=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), nullable=False, index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    cover_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LookbookSectionItem(Base):
+    __tablename__ = "lookbook_section_item"
+    __table_args__ = (
+        UniqueConstraint("section_id", "asset_id", name="uq_lookbook_section_item_section_asset"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lookbook_product_section.id"), nullable=False, index=True
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset.id"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    source: Mapped[str] = mapped_column(String, nullable=False, default="system", server_default="system")
+    is_cover: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
