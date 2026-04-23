@@ -5,8 +5,8 @@
 ## 当前版本
 
 - 当前封版标签：`release1.2`
-- 当前主要分支：`feature/aigc-nano-banana-ideas`
-- 最近更新时间：`2026-04-22`
+- 当前主要分支：`main`
+- 最近更新时间：`2026-04-23`
 - Swagger UI：`http://127.0.0.1:8000/docs`
 - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
 
@@ -18,7 +18,7 @@
 
 - AIGC 生成与优化链路稳定化
 - 资产上传 / 资产商品关联接口补齐
-- lookbook section 编辑模型与兼容层完善
+- lookbook section 编辑模型、排序能力与兼容层完善
 - Celery 队列与 Ark key 兼容配置补齐
 
 ## 技术栈
@@ -201,9 +201,10 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 当前封版新增点：
 
 - product-driven section editor API
-- section 删除 / 补图接口
+- section 删除 / 补图 / 排序接口
 - mutation path 与 `lookbook_id` 一致性校验
 - buyer 端 section flatten 兼容输出
+- 商品池可用 `has_assets=true` 仅筛出已关联图片商品
 
 ### 4. AIGC
 
@@ -218,6 +219,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 
 - provider 不再使用 Ark 已废弃的 `n`
 - 保留 `candidate_count` 接口兼容层
+- 支持基于候选图继续发起自动优化 / 自定义提示词优化
 
 ## 核心接口摘要
 
@@ -251,6 +253,11 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `PATCH /products/{product_id}/tags`
 - `POST /products/admin/sales/sync`
 
+常用筛选补充：
+
+- `GET /products?has_assets=true`
+  仅返回至少已绑定 1 张图片资产的商品，适合 lookbook 待选商品池。
+
 ### Taxonomy
 
 - `GET /taxonomy`
@@ -272,15 +279,28 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 ### Lookbooks
 
 - `POST /lookbooks`
+- `PATCH /lookbooks/{lb_id}`
+- `GET /lookbooks`
 - `POST /lookbooks/{lb_id}/publish`
+- `DELETE /lookbooks/{lb_id}/unpublish`
+- `GET /lookbooks/{lb_id}/access`
 - `POST /lookbooks/{lb_id}/access`
+- `DELETE /lookbooks/{lb_id}/access/{user_id}`
 - `GET /lookbooks/{lb_id}/sections`
 - `POST /lookbooks/{lb_id}/sections/products`
+- `PATCH /lookbooks/{lb_id}/sections/reorder`
 - `POST /lookbooks/{lb_id}/sections/{section_id}/items`
 - `DELETE /lookbooks/{lb_id}/sections/{section_id}`
 - `DELETE /lookbooks/{lb_id}/sections/{section_id}/items/{asset_id}`
 - `GET /my/lookbooks`
 - `GET /my/lookbooks/{lb_id}/items`
+
+编辑器行为补充：
+
+- `GET /lookbooks/{lb_id}/sections`
+  会把未迁移的 legacy `lookbook_item` 自动包装成 synthetic legacy section 返回给前端编辑器。
+- `PATCH /lookbooks/{lb_id}/sections/reorder`
+  只重排真实商品 section，不包含 legacy synthetic section。
 
 ### AIGC
 
@@ -289,7 +309,17 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `GET /aigc/tasks/{task_id}`
 - `POST /aigc/tasks/{task_id}/approve`
 - `POST /aigc/tasks/{task_id}/reject`
-- `POST /aigc/tasks/{task_id}/optimize`
+- `POST /aigc/candidates/{candidate_id}/optimize`
+- `POST /aigc/candidates/{candidate_id}/feedback`
+- `GET /aigc/candidates/{candidate_id}/file`
+- `GET /aigc/providers`
+
+优化链路补充：
+
+- `POST /aigc/candidates/{candidate_id}/optimize`
+  支持两种模式：
+  - `mode=auto`：自动增强服装纹理、人物细节和配饰合理性
+  - `mode=custom`：追加用户自定义提示词继续优化
 
 ### Jobs
 

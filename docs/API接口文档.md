@@ -71,6 +71,7 @@
 - 常用参数：
   - `q`：商品码/名称模糊搜索
   - `tag_ids`（可重复）：属性筛选（同维度 OR、跨维度 AND）
+  - `has_assets`：仅返回至少已绑定 1 张图片资产的商品
   - `page` / `page_size`
 - 说明补充：`TMPUID-*` 占位商品默认排序在列表后部。
 
@@ -126,16 +127,80 @@
 
 ### 管理端
 - `POST /lookbooks`
+- `GET /lookbooks`
 - `PATCH /lookbooks/{lb_id}`
 - `POST /lookbooks/{lb_id}/publish`
+- `DELETE /lookbooks/{lb_id}/unpublish`
 - `POST /lookbooks/{lb_id}/items`
 - `DELETE /lookbooks/{lb_id}/items/{asset_id}`
 - `GET /lookbooks/{lb_id}/items`
 
+### Section 编辑
+- `GET /lookbooks/{lb_id}/sections`
+- `POST /lookbooks/{lb_id}/sections/products`
+- `PATCH /lookbooks/{lb_id}/sections/reorder`
+- `POST /lookbooks/{lb_id}/sections/{section_id}/items`
+- `DELETE /lookbooks/{lb_id}/sections/{section_id}`
+- `DELETE /lookbooks/{lb_id}/sections/{section_id}/items/{asset_id}`
+
+### GET `/lookbooks/{lb_id}/sections`
+- 说明：返回编辑器所需的 section 结构。
+- 兼容逻辑：
+  - 已迁移的新数据以真实 `lookbook_product_section` 返回
+  - 未迁移的 legacy `lookbook_item` 会被包装成 synthetic legacy section 一并返回
+- 使用建议：
+  - 前端应把 `product_id = null` 的 section 视为只读兼容分区
+
+### POST `/lookbooks/{lb_id}/sections/products`
+- 说明：按商品创建 section，并自动补入推荐图片。
+- 权限：admin / editor
+- 行为：
+  - 同一商品在同一画册中不允许重复创建 section
+  - 若商品没有关联图片，返回 `422`
+
+### PATCH `/lookbooks/{lb_id}/sections/reorder`
+- 说明：保存商品 section 的拖拽排序结果。
+- 权限：admin / editor
+- 请求体：
+  ```json
+  {
+    "section_ids": ["uuid-1", "uuid-2", "uuid-3"]
+  }
+  ```
+- 约束：
+  - 必须包含当前画册下全部真实商品 section
+  - 不允许缺失、重复或跨画册 section id
+  - legacy synthetic section 不参与该接口
+
+### POST `/lookbooks/{lb_id}/sections/{section_id}/items`
+- 说明：向某个商品 section 追加图片。
+- 权限：admin / editor
+- 请求体：
+  ```json
+  {
+    "asset_ids": ["uuid-1", "uuid-2"]
+  }
+  ```
+
+### DELETE `/lookbooks/{lb_id}/sections/{section_id}`
+- 说明：删除整个商品 section。
+- 权限：admin / editor
+
+### DELETE `/lookbooks/{lb_id}/sections/{section_id}/items/{asset_id}`
+- 说明：删除 section 内某一张图，并自动维护 cover。
+- 权限：admin / editor
+
 ### 访问授权
 - `POST /lookbooks/{lb_id}/access`
 - `DELETE /lookbooks/{lb_id}/access/{user_id}`
+- `GET /lookbooks/{lb_id}/access`
 - `GET /my/lookbooks`
+
+### GET `/my/lookbooks/{lb_id}/items`
+- 说明：buyer 端读取画册平铺输出。
+- 行为：
+  - 自动合并 section 图片与 legacy `lookbook_item`
+  - 返回全局递增 `sort_order`
 
 ## 7. 任务（Jobs）
 
@@ -173,6 +238,8 @@ queued → running → review_pending → approved
   }
   ```
 - `consent_checked` 必须为 `true`，否则返回 422。
+- 说明补充：
+  - `candidate_count` 仍可传入，但 provider 侧已兼容不再直接透传已废弃的 `n` 参数
 
 ### GET `/aigc/tasks`
 - 说明：列出 AIGC 任务（支持按状态和商品筛选）。
@@ -200,10 +267,38 @@ queued → running → review_pending → approved
 - 权限：admin / editor
 - 请求体：`{ "reason": "质量不达标" }`
 
+### POST `/aigc/candidates/{candidate_id}/optimize`
+- 说明：基于已有候选图继续发起优化任务。
+- 权限：admin / editor
+- 请求体：
+  ```json
+  {
+    "mode": "auto",
+    "custom_prompt": null
+  }
+  ```
+  或
+  ```json
+  {
+    "mode": "custom",
+    "custom_prompt": "增强面部真实感，修复手部和鞋子细节"
+  }
+  ```
+- 行为：
+  - `mode=auto`：自动拼接系统增强提示词，侧重服装纹理、面部、手部、鞋履、配饰合理性
+  - `mode=custom`：在优化链路中叠加用户自定义提示词
+  - 会保留优化 lineage，优化任务与来源 candidate / 来源 task 可追溯
+
 ### POST `/aigc/candidates/{candidate_id}/feedback`
 - 说明：对候选图评分/评论。
 - 权限：admin / editor
 - 请求体：`{ "score": 1-5, "comment": "..." }`
+
+### GET `/aigc/candidates/{candidate_id}/file`
+- 说明：读取候选图缩略图或原图。
+- 权限：admin / editor / viewer（支持 query token）
+- 参数：
+  - `kind=thumb|original`
 
 ### GET `/aigc/providers`
 - 说明：列出可用的 AIGC 供应商。
