@@ -1,6 +1,6 @@
 # Gallery API 接口文档（中文）
 
-更新时间：2026-04-19
+更新时间：2026-04-24
 服务地址（本地）：`http://127.0.0.1:8000`
 
 ## 1. 认证与用户
@@ -91,6 +91,17 @@
 
 ### GET `/products/admin/unresolved-assets`
 - 说明：查看未解析商品号的资产（运营排查）
+
+### POST `/products/admin/sales/sync`
+- 说明：从 `budan.orders` 同步销售原始数据，并重建商品销量汇总。
+- 权限：admin / editor
+- 行为：
+  - 仅替换 `source = "budan"` 的销售原始记录
+  - 保留其他历史手工来源（例如 legacy 表格导入）
+  - 同步完成后会全量重建 `product_sales_summary`
+- 兼容规则：
+  - `sales_order_raw.source_order_id` 允许为空，兼容历史销售来源
+  - 历史来源不强制补伪订单号，内部主键 `id` 仍可作为表内唯一标识
 
 ## 4. 分类与标签（Taxonomy）
 

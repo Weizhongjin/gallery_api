@@ -125,7 +125,7 @@ def db(db_engine):
             CREATE TABLE IF NOT EXISTS sales_order_raw (
               id serial PRIMARY KEY,
               source varchar NOT NULL DEFAULT 'budan',
-              source_order_id integer NOT NULL,
+              source_order_id integer NULL,
               order_date date NULL,
               style_no_norm varchar NOT NULL,
               total_qty integer NOT NULL DEFAULT 0,

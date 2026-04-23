@@ -1,4 +1,5 @@
 import uuid
+from contextlib import nullcontext
 
 import pytest
 
@@ -13,12 +14,14 @@ from app.assets.models import (
     ProductSalesSummary,
     ProductTag,
     ProductTagSource,
+    SalesOrderRaw,
     TagSource,
     TaxonomyNode,
     DimensionEnum,
 )
 from app.auth.models import User, UserRole
 from app.auth.service import create_access_token, hash_password
+from app.products.sales_sync import sync_sales_from_budan
 
 
 @pytest.fixture
@@ -321,3 +324,80 @@ def test_rebuild_product_tags(client, admin_token, sample_asset, db):
 
     tags = db.query(ProductTag).filter(ProductTag.product_id == product.id).all()
     assert any(t.node_id == node.id and t.source == ProductTagSource.aggregated for t in tags)
+
+
+def test_sync_sales_from_budan_replaces_only_target_source(monkeypatch, db):
+    product = Product(product_code="B300001")
+    db.add(product)
+    db.flush()
+
+    db.add_all(
+        [
+            ProductSalesSummary(product_id=product.id, product_code=product.product_code, sales_total_qty=2),
+            # Legacy source without external order id should remain compatible.
+            SalesOrderRaw(
+                source="legacy_sheet",
+                source_order_id=None,
+                order_date=None,
+                style_no_norm="B999999",
+                total_qty=7,
+                customer="Legacy",
+            ),
+            SalesOrderRaw(
+                source="budan",
+                source_order_id=1,
+                order_date=None,
+                style_no_norm="B-OLD",
+                total_qty=1,
+                customer="Old customer",
+            ),
+        ]
+    )
+    db.commit()
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return [
+                {
+                    "id": 101,
+                    "salesperson": "Alice",
+                    "source_file": "orders.xlsx",
+                    "order_type": "买断",
+                    "order_date": None,
+                    "customer": "New customer",
+                    "style_no": "b300001",
+                    "color": "black",
+                    "total_qty": 9,
+                    "remark": "fresh row",
+                }
+            ]
+
+    class FakeConn:
+        def execute(self, _statement):
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return nullcontext(FakeConn())
+
+    monkeypatch.setattr("app.products.sales_sync.create_engine", lambda _url: FakeEngine())
+
+    summary = sync_sales_from_budan(db, budan_database_url="postgresql://fake/budan")
+
+    assert summary == {"raw_rows_read": 1, "raw_rows_upserted": 1, "summary_rows": 1}
+
+    rows = db.query(SalesOrderRaw).order_by(SalesOrderRaw.source, SalesOrderRaw.id).all()
+    assert len(rows) == 2
+    assert rows[0].source == "budan"
+    assert rows[0].source_order_id == 101
+    assert rows[0].style_no_norm == "B300001"
+    assert rows[1].source == "legacy_sheet"
+    assert rows[1].source_order_id is None
+
+    rebuilt = db.query(ProductSalesSummary).all()
+    assert len(rebuilt) == 1
+    assert rebuilt[0].product_code == "B300001"
+    assert rebuilt[0].sales_total_qty == 9

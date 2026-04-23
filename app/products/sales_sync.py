@@ -21,8 +21,10 @@ def sync_sales_from_budan(
 ) -> dict[str, int]:
     """Sync budan.orders into sales_order_raw and rebuild product_sales_summary.
 
-    This operation is idempotent: raw rows are upserted by (source, source_order_id),
-    summary rows are rebuilt from normalized style_no aggregation.
+    This operation is idempotent for the given source: existing raw rows from that
+    source are replaced in bulk, and summary rows are rebuilt from normalized
+    style_no aggregation. This keeps legacy sources with nullable
+    ``source_order_id`` compatible while still allowing repeatable budan syncs.
     """
     budan_engine = create_engine(budan_database_url)
 
@@ -63,22 +65,14 @@ def sync_sales_from_budan(
             }
         )
 
+    db.execute(
+        text("DELETE FROM sales_order_raw WHERE source = :source"),
+        {"source": source},
+    )
+
     raw_upserts = 0
     if upsert_payload:
         stmt = insert(SalesOrderRaw).values(upsert_payload)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["source", "source_order_id"],
-            set_={
-                "order_date": stmt.excluded.order_date,
-                "style_no_norm": stmt.excluded.style_no_norm,
-                "total_qty": stmt.excluded.total_qty,
-                "customer": stmt.excluded.customer,
-                "salesperson": stmt.excluded.salesperson,
-                "order_type": stmt.excluded.order_type,
-                "source_file": stmt.excluded.source_file,
-                "raw_payload": stmt.excluded.raw_payload,
-            },
-        )
         db.execute(stmt)
         raw_upserts = len(upsert_payload)
 

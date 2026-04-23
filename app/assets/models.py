@@ -215,7 +215,7 @@ class SalesOrderRaw(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String, nullable=False, default="budan", server_default="budan")
-    source_order_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     order_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     style_no_norm: Mapped[str] = mapped_column(String, index=True, nullable=False)
     total_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

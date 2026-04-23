@@ -257,6 +257,14 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 
 - `GET /products?has_assets=true`
   仅返回至少已绑定 1 张图片资产的商品，适合 lookbook 待选商品池。
+- `POST /products/admin/sales/sync`
+  按 `source=budan` 整体替换销售原始数据，再重建 `product_sales_summary`。
+
+销售同步兼容说明：
+
+- `sales_order_raw.source_order_id` 允许为空，兼容历史手工导入来源。
+- 历史来源可以只依赖表内主键 `id` 存活，不强制补伪订单号。
+- `budan` 同步不再依赖 `(source, source_order_id)` upsert，而是按来源整体替换，避免 legacy 空值导致冲突。
 
 ### Taxonomy
 
