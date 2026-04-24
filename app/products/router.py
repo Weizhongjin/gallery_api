@@ -9,6 +9,7 @@ from app.auth.models import User, UserRole
 from app.database import get_db
 from app.products.schemas import (
     ProductAssetOut,
+    ProductGovernanceSummaryOut,
     ProductPageOut,
     ProductOut,
     ProductPatchIn,
@@ -17,8 +18,10 @@ from app.products.schemas import (
     ProductUpsertIn,
 )
 from app.products.service import (
+    get_product_governance_summary,
     get_product_with_sales,
     list_product_assets,
+    list_product_governance_items,
     list_product_tags,
     list_products,
     list_unresolved_assets,
@@ -178,6 +181,29 @@ def rebuild_tags(
     summary = rebuild_product_tags_for_product(db, product_id)
     db.commit()
     return {"product_id": str(product_id), **summary}
+
+
+@router.get("/governance/summary", response_model=ProductGovernanceSummaryOut)
+def governance_summary(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return get_product_governance_summary(db)
+
+
+@router.get("/governance/items")
+def governance_items(
+    problem: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 24,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    items, total = list_product_governance_items(
+        db, problem=problem, q=q, page=page, page_size=page_size
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/admin/unresolved-assets")

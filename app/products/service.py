@@ -1,7 +1,7 @@
 import uuid
 from collections import defaultdict
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
@@ -11,6 +11,7 @@ from app.assets.models import (
     AssetTag,
     AssetType,
     DimensionEnum,
+    LookbookProductSection,
     ParseStatus,
     Product,
     ProductSalesSummary,
@@ -326,3 +327,156 @@ def rebuild_product_tags_for_product(db: Session, product_id: uuid.UUID) -> dict
 
     db.flush()
     return {"aggregated_count": inserted, "locked_dims": len(human_dims)}
+
+
+# ── Governance helpers ─────────────────────────────────────────────
+
+from app.products.governance import derive_product_governance_state
+
+
+def _governance_base_query(db: Session, q: str | None = None) -> Select:
+    sales_expr = func.coalesce(ProductSalesSummary.sales_total_qty, 0).label("sales_total_qty")
+
+    flatlay_sub = (
+        select(func.count())
+        .select_from(AssetProduct)
+        .join(Asset, Asset.id == AssetProduct.asset_id)
+        .where(AssetProduct.product_id == Product.id)
+        .where(Asset.asset_type == AssetType.flatlay)
+        .correlate(Product)
+        .scalar_subquery()
+        .label("flatlay_count")
+    )
+    model_sub = (
+        select(func.count())
+        .select_from(AssetProduct)
+        .join(Asset, Asset.id == AssetProduct.asset_id)
+        .where(AssetProduct.product_id == Product.id)
+        .where(Asset.asset_type == AssetType.model_set)
+        .correlate(Product)
+        .scalar_subquery()
+        .label("model_count")
+    )
+    advertising_sub = (
+        select(func.count())
+        .select_from(AssetProduct)
+        .join(Asset, Asset.id == AssetProduct.asset_id)
+        .where(AssetProduct.product_id == Product.id)
+        .where(Asset.asset_type == AssetType.advertising)
+        .correlate(Product)
+        .scalar_subquery()
+        .label("advertising_count")
+    )
+    ai_asset_sub = (
+        select(func.count())
+        .select_from(AssetProduct)
+        .join(Asset, Asset.id == AssetProduct.asset_id)
+        .where(AssetProduct.product_id == Product.id)
+        .where(Asset.is_ai_generated.is_(True))
+        .correlate(Product)
+        .scalar_subquery()
+        .label("ai_asset_count")
+    )
+    lookbook_sub = (
+        select(func.count())
+        .select_from(LookbookProductSection)
+        .where(LookbookProductSection.product_id == Product.id)
+        .correlate(Product)
+        .scalar_subquery()
+        .label("lookbook_count")
+    )
+    tag_sub = (
+        select(func.count())
+        .select_from(ProductTag)
+        .where(ProductTag.product_id == Product.id)
+        .correlate(Product)
+        .scalar_subquery()
+        .label("tag_count")
+    )
+    primary_asset_sub = (
+        select(AssetProduct.asset_id)
+        .where(AssetProduct.product_id == Product.id)
+        .correlate(Product)
+        .order_by(AssetProduct.created_at.asc())
+        .limit(1)
+        .scalar_subquery()
+        .label("primary_asset_id")
+    )
+
+    query = db.query(
+        Product.id,
+        Product.product_code,
+        Product.name,
+        sales_expr,
+        flatlay_sub,
+        model_sub,
+        advertising_sub,
+        ai_asset_sub,
+        lookbook_sub,
+        tag_sub,
+        primary_asset_sub,
+    ).outerjoin(ProductSalesSummary, ProductSalesSummary.product_id == Product.id)
+
+    if q:
+        key = f"%{q.strip().upper()}%"
+        query = query.filter(
+            Product.product_code.ilike(key) | Product.name.ilike(key)
+        )
+
+    return query
+
+
+def list_product_governance_items(
+    db: Session,
+    *,
+    problem: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 24,
+) -> tuple[list[dict], int]:
+    rows = _governance_base_query(db, q=q).all()
+    items: list[dict] = []
+    for row in rows:
+        state = derive_product_governance_state(
+            flatlay_count=row.flatlay_count,
+            model_count=row.model_count,
+            advertising_count=row.advertising_count,
+            has_ai_assets=(row.ai_asset_count or 0) > 0,
+            lookbook_count=row.lookbook_count or 0,
+            tag_count=row.tag_count or 0,
+        )
+        if problem and problem != "all":
+            if problem == "missing_advertising" and "missing_advertising" not in state.aux_tags:
+                continue
+            elif problem not in (state.completeness_state, "missing_advertising"):
+                continue
+
+        items.append({
+            "id": row.id,
+            "product_code": row.product_code,
+            "name": row.name,
+            "sales_total_qty": int(row.sales_total_qty or 0),
+            "completeness_state": state.completeness_state,
+            "aux_tags": state.aux_tags,
+            "recommended_action": state.recommended_action,
+            "flatlay_count": row.flatlay_count or 0,
+            "model_count": row.model_count or 0,
+            "advertising_count": row.advertising_count or 0,
+            "primary_asset_id": row.primary_asset_id,
+        })
+
+    total = len(items)
+    start = (page - 1) * page_size
+    return items[start : start + page_size], total
+
+
+def get_product_governance_summary(db: Session) -> dict:
+    items, _ = list_product_governance_items(db, problem=None, q=None, page=1, page_size=100000)
+    return {
+        "total_products": len(items),
+        "missing_all_assets": sum(1 for it in items if it["completeness_state"] == "missing_all_assets"),
+        "missing_flatlay": sum(1 for it in items if it["completeness_state"] == "missing_flatlay"),
+        "missing_model": sum(1 for it in items if it["completeness_state"] == "missing_model"),
+        "missing_advertising": sum(1 for it in items if "missing_advertising" in it["aux_tags"]),
+        "in_lookbook": sum(1 for it in items if "lookbook_unused" not in it["aux_tags"]),
+    }
