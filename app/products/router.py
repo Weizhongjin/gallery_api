@@ -16,9 +16,11 @@ from app.products.schemas import (
     ProductTagOut,
     ProductTagPatchIn,
     ProductUpsertIn,
+    ProductWorkbenchOut,
 )
 from app.products.service import (
     get_product_governance_summary,
+    get_product_workbench,
     get_product_with_sales,
     list_product_assets,
     list_product_governance_items,
@@ -181,6 +183,18 @@ def rebuild_tags(
     summary = rebuild_product_tags_for_product(db, product_id)
     db.commit()
     return {"product_id": str(product_id), **summary}
+
+
+@router.get("/{product_id}/workbench", response_model=ProductWorkbenchOut)
+def product_workbench(
+    product_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    payload = get_product_workbench(db, product_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return payload
 
 
 @router.get("/governance/summary", response_model=ProductGovernanceSummaryOut)

@@ -4,6 +4,7 @@ from collections import defaultdict
 from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.aigc.models import AigcTask
 from app.assets.models import (
     Asset,
     AssetProduct,
@@ -479,4 +480,93 @@ def get_product_governance_summary(db: Session) -> dict:
         "missing_model": sum(1 for it in items if it["completeness_state"] == "missing_model"),
         "missing_advertising": sum(1 for it in items if "missing_advertising" in it["aux_tags"]),
         "in_lookbook": sum(1 for it in items if "lookbook_unused" not in it["aux_tags"]),
+    }
+
+
+# ── Workbench helpers ──────────────────────────────────────────────
+
+
+def get_product_workbench(db: Session, product_id: uuid.UUID) -> dict | None:
+    row = get_product_with_sales(db, product_id)
+    if not row:
+        return None
+    product, sales_total_qty = row
+    assets = list_product_assets(db, product_id)
+    tags = list_product_tags(db, product_id)
+
+    grouped_assets: dict[str, list] = {
+        "flatlay": [],
+        "model_set": [],
+        "advertising": [],
+        "unknown": [],
+    }
+    ai_asset_count = 0
+    for asset, link in assets:
+        key = asset.asset_type.value if asset.asset_type else "unknown"
+        grouped_assets[key].append((asset, link))
+        if asset.is_ai_generated:
+            ai_asset_count += 1
+
+    latest_task = (
+        db.query(AigcTask)
+        .filter(AigcTask.product_id == product_id)
+        .order_by(AigcTask.created_at.desc())
+        .first()
+    )
+
+    lookbook_count = (
+        db.query(func.count())
+        .select_from(LookbookProductSection)
+        .filter(LookbookProductSection.product_id == product_id)
+        .scalar()
+    ) or 0
+
+    state = derive_product_governance_state(
+        flatlay_count=len(grouped_assets["flatlay"]),
+        model_count=len(grouped_assets["model_set"]),
+        advertising_count=len(grouped_assets["advertising"]),
+        has_ai_assets=ai_asset_count > 0,
+        lookbook_count=lookbook_count,
+        tag_count=len(tags),
+    )
+
+    from app.products.schemas import ProductAssetOut, ProductOut, ProductTagOut
+
+    return {
+        "product": ProductOut.model_validate(product, from_attributes=True).model_copy(
+            update={"sales_total_qty": int(sales_total_qty or 0)}
+        ),
+        "completeness_state": state.completeness_state,
+        "aux_tags": state.aux_tags,
+        "recommended_action": state.recommended_action,
+        "grouped_assets": {
+            key: [
+                ProductAssetOut(
+                    asset_id=asset.id,
+                    filename=asset.filename,
+                    asset_type=asset.asset_type,
+                    thumb_uri=asset.thumb_uri,
+                    display_uri=asset.display_uri,
+                    width=asset.width,
+                    height=asset.height,
+                    created_at=asset.created_at,
+                    relation_role=link.relation_role,
+                    source=link.source,
+                    confidence=link.confidence,
+                )
+                for asset, link in value
+            ]
+            for key, value in grouped_assets.items()
+        },
+        "aigc_summary": {
+            "latest_task_id": str(latest_task.id) if latest_task else None,
+            "latest_task_status": latest_task.status.value if latest_task else None,
+            "latest_task_created_at": latest_task.created_at.isoformat() if latest_task else None,
+        },
+        "lookbook_summary": {"count": int(lookbook_count)},
+        "tag_summary": [
+            ProductTagOut(node_id=t.node_id, source=t.source, confidence=t.confidence)
+            for t in tags
+        ],
+        "quality_issues": [state.completeness_state, *state.aux_tags],
     }

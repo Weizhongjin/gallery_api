@@ -251,3 +251,70 @@ def test_governance_items_supports_search(client, admin_token, governance_fixtur
     body = response.json()
     assert body["total"] == 1
     assert body["items"][0]["product_code"] == "GOV-003"
+
+
+# ── Workbench API tests ─────────────────────────────────────────────
+
+from app.aigc.models import AigcTask, AigcTaskStatus
+
+
+@pytest.fixture
+def workbench_fixture(db):
+    """Create a product with mixed assets, AIGC task, and lookbook entry."""
+    fixture_user = User(
+        email="wb-fixture@example.com",
+        password_hash=hash_password("pw"),
+        name="WB Fixture",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    db.add(fixture_user)
+    db.flush()
+
+    product = Product(product_code="WB-001", name="Workbench Product")
+    db.add(product)
+    db.flush()
+
+    flatlay = _make_asset(db, "wb_flat.jpg", AssetType.flatlay)
+    model = _make_asset(db, "wb_model.jpg", AssetType.model_set)
+    ad = _make_asset(db, "wb_ad.jpg", AssetType.advertising)
+    unknown = _make_asset(db, "wb_unknown.jpg", AssetType.unknown)
+    _link(db, flatlay, product)
+    _link(db, model, product)
+    _link(db, ad, product)
+    _link(db, unknown, product)
+
+    lookbook = Lookbook(title="WB Lookbook", is_published=False, created_by=fixture_user.id)
+    db.add(lookbook)
+    db.flush()
+    db.add(LookbookProductSection(lookbook_id=lookbook.id, product_id=product.id, sort_order=0))
+
+    task = AigcTask(
+        product_id=product.id,
+        flatlay_asset_id=flatlay.id,
+        flatlay_original_uri=flatlay.original_uri,
+        reference_source="library",
+        workflow_type="base",
+        status=AigcTaskStatus.review_pending,
+        provider="seedream_ark",
+        model_name="doubao-seedream-4-5-251128",
+        created_by=fixture_user.id,
+    )
+    db.add(task)
+
+    db.commit()
+    return {"product_id": str(product.id)}
+
+
+def test_product_workbench_returns_grouped_assets_and_context(client, admin_token, workbench_fixture):
+    response = client.get(
+        f"/products/{workbench_fixture['product_id']}/workbench",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["completeness_state"] == "complete"
+    assert list(body["grouped_assets"].keys()) == ["flatlay", "model_set", "advertising", "unknown"]
+    assert body["aigc_summary"]["latest_task_status"] == "review_pending"
+    assert body["lookbook_summary"]["count"] == 1
+    assert "missing_advertising" not in body["quality_issues"]
