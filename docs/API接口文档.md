@@ -89,6 +89,17 @@
 - `PATCH /products/{product_id}/tags`：人工维护商品标签
 - `POST /products/{product_id}/tags/rebuild`：按关联资产标签重建聚合标签
 
+### GET `/products/governance/summary`
+- 说明：商品治理总览指标。
+- 响应：`{ total_products, missing_all_assets, missing_flatlay, missing_model, missing_advertising, in_lookbook }`
+
+### GET `/products/governance/items`
+- 说明：治理问题商品池，支持按问题类型筛选。
+- 参数：`problem`（`all|missing_all_assets|missing_flatlay|missing_model|missing_advertising`）、`q`（商品码/名称搜索）、`page` / `page_size`
+
+### GET `/products/{product_id}/workbench`
+- 说明：商品工作台聚合详情，包含基础信息、完整性状态、推荐动作、分组资产、AIGC 摘要、Lookbook 摘要、标签与质量问题列表。
+
 ### GET `/products/admin/unresolved-assets`
 - 说明：查看未解析商品号的资产（运营排查）
 
