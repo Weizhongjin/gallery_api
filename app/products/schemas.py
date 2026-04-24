@@ -68,3 +68,38 @@ class ProductTagOut(BaseModel):
 class ProductTagPatchIn(BaseModel):
     add: list[uuid.UUID] = []
     remove: list[uuid.UUID] = []
+
+
+class ProductGovernanceSummaryOut(BaseModel):
+    total_products: int
+    missing_all_assets: int
+    missing_flatlay: int
+    missing_model: int
+    missing_advertising: int
+    in_lookbook: int
+
+
+class ProductGovernanceItemOut(BaseModel):
+    id: uuid.UUID
+    product_code: str
+    name: str | None = None
+    sales_total_qty: int
+    completeness_state: str
+    aux_tags: list[str]
+    recommended_action: str
+    flatlay_count: int
+    model_count: int
+    advertising_count: int
+    primary_asset_id: uuid.UUID | None = None
+
+
+class ProductWorkbenchOut(BaseModel):
+    product: ProductOut
+    completeness_state: str
+    aux_tags: list[str]
+    recommended_action: str
+    grouped_assets: dict[str, list[ProductAssetOut]]
+    aigc_summary: dict
+    lookbook_summary: dict
+    tag_summary: list[ProductTagOut]
+    quality_issues: list[str]
