@@ -157,7 +157,7 @@ def tags(
     _: User = Depends(get_current_user),
 ):
     rows = list_product_tags(db, product_id)
-    return [ProductTagOut(node_id=r.node_id, source=r.source, confidence=r.confidence) for r in rows]
+    return [ProductTagOut(node_id=r.node_id, node_name=name, source=r.source, confidence=r.confidence) for r, name in rows]
 
 
 @router.patch("/{product_id}/tags", response_model=list[ProductTagOut])
@@ -171,7 +171,7 @@ def patch_tags(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     rows = list_product_tags(db, product_id)
-    return [ProductTagOut(node_id=r.node_id, source=r.source, confidence=r.confidence) for r in rows]
+    return [ProductTagOut(node_id=r.node_id, node_name=name, source=r.source, confidence=r.confidence) for r, name in rows]
 
 
 @router.post("/{product_id}/tags/rebuild")

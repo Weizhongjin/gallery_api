@@ -61,6 +61,7 @@ class ProductAssetOut(BaseModel):
 
 class ProductTagOut(BaseModel):
     node_id: uuid.UUID
+    node_name: str | None = None
     source: ProductTagSource
     confidence: float | None = None
 
@@ -99,7 +100,7 @@ class ProductWorkbenchOut(BaseModel):
     aux_tags: list[str]
     recommended_action: str
     grouped_assets: dict[str, list[ProductAssetOut]]
-    aigc_summary: dict
-    lookbook_summary: dict
+    aigc_summary: dict[str, str | int | bool | None]
+    lookbook_summary: dict[str, int | list[dict[str, str]]]
     tag_summary: list[ProductTagOut]
     quality_issues: list[str]

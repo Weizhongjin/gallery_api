@@ -12,6 +12,7 @@ from app.assets.models import (
     AssetTag,
     AssetType,
     DimensionEnum,
+    Lookbook,
     LookbookProductSection,
     ParseStatus,
     Product,
@@ -251,9 +252,10 @@ def patch_product_human_tags(
     return product
 
 
-def list_product_tags(db: Session, product_id: uuid.UUID) -> list[ProductTag]:
+def list_product_tags(db: Session, product_id: uuid.UUID) -> list[tuple[ProductTag, str | None]]:
     return (
-        db.query(ProductTag)
+        db.query(ProductTag, TaxonomyNode.name)
+        .outerjoin(TaxonomyNode, TaxonomyNode.id == ProductTag.node_id)
         .filter(ProductTag.product_id == product_id)
         .all()
     )
@@ -449,7 +451,9 @@ def list_product_governance_items(
         if problem and problem != "all":
             if problem == "missing_advertising" and "missing_advertising" not in state.aux_tags:
                 continue
-            elif problem not in (state.completeness_state, "missing_advertising"):
+            elif problem == "in_lookbook" and "lookbook_unused" in state.aux_tags:
+                continue
+            elif problem not in (state.completeness_state, "missing_advertising", "in_lookbook"):
                 continue
 
         items.append({
@@ -514,12 +518,26 @@ def get_product_workbench(db: Session, product_id: uuid.UUID) -> dict | None:
         .first()
     )
 
+    latest_task_candidate_count = len(latest_task.candidates) if latest_task else 0
+    latest_task_selected_count = (
+        sum(1 for candidate in latest_task.candidates if candidate.is_selected)
+        if latest_task
+        else 0
+    )
+
     lookbook_count = (
         db.query(func.count())
         .select_from(LookbookProductSection)
         .filter(LookbookProductSection.product_id == product_id)
         .scalar()
     ) or 0
+    lookbooks = (
+        db.query(Lookbook.id, Lookbook.title)
+        .join(LookbookProductSection, LookbookProductSection.lookbook_id == Lookbook.id)
+        .filter(LookbookProductSection.product_id == product_id)
+        .order_by(Lookbook.created_at.desc())
+        .all()
+    )
 
     state = derive_product_governance_state(
         flatlay_count=len(grouped_assets["flatlay"]),
@@ -562,11 +580,18 @@ def get_product_workbench(db: Session, product_id: uuid.UUID) -> dict | None:
             "latest_task_id": str(latest_task.id) if latest_task else None,
             "latest_task_status": latest_task.status.value if latest_task else None,
             "latest_task_created_at": latest_task.created_at.isoformat() if latest_task else None,
+            "latest_task_workflow_type": latest_task.workflow_type if latest_task else None,
+            "latest_task_candidate_count": latest_task_candidate_count,
+            "latest_selected_candidate_count": latest_task_selected_count,
+            "has_selected_candidate": latest_task_selected_count > 0,
         },
-        "lookbook_summary": {"count": int(lookbook_count)},
+        "lookbook_summary": {
+            "count": int(lookbook_count),
+            "items": [{"id": str(lb_id), "title": title} for lb_id, title in lookbooks],
+        },
         "tag_summary": [
-            ProductTagOut(node_id=t.node_id, source=t.source, confidence=t.confidence)
-            for t in tags
+            ProductTagOut(node_id=t.node_id, node_name=name, source=t.source, confidence=t.confidence)
+            for t, name in tags
         ],
-        "quality_issues": [state.completeness_state, *state.aux_tags],
+        "quality_issues": [state.completeness_state, *state.aux_tags] if state.completeness_state != "complete" else [*state.aux_tags],
     }

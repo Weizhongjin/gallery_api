@@ -253,6 +253,17 @@ def test_governance_items_supports_search(client, admin_token, governance_fixtur
     assert body["items"][0]["product_code"] == "GOV-003"
 
 
+def test_governance_items_filters_in_lookbook(client, admin_token, governance_fixture):
+    response = client.get(
+        "/products/governance/items?problem=in_lookbook&page=1&page_size=20",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["product_code"] == "GOV-003"
+
+
 # ── Workbench API tests ─────────────────────────────────────────────
 
 from app.aigc.models import AigcTask, AigcTaskStatus
@@ -316,5 +327,8 @@ def test_product_workbench_returns_grouped_assets_and_context(client, admin_toke
     assert body["completeness_state"] == "complete"
     assert list(body["grouped_assets"].keys()) == ["flatlay", "model_set", "advertising", "unknown"]
     assert body["aigc_summary"]["latest_task_status"] == "review_pending"
+    assert body["aigc_summary"]["latest_task_candidate_count"] == 0
+    assert body["aigc_summary"]["has_selected_candidate"] is False
     assert body["lookbook_summary"]["count"] == 1
+    assert body["lookbook_summary"]["items"][0]["title"] == "WB Lookbook"
     assert "missing_advertising" not in body["quality_issues"]
