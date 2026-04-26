@@ -4,9 +4,9 @@
 
 ## 当前版本
 
-- 当前封版标签：`release1.2`
+- FastAPI 应用版本：`1.1.0`
 - 当前主要分支：`main`
-- 最近更新时间：`2026-04-24`
+- 最近更新时间：`2026-04-26`
 - Swagger UI：`http://127.0.0.1:8000/docs`
 - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
 
@@ -23,6 +23,8 @@
 - 商品治理总览 / 问题商品池 / 商品工作台聚合接口上线
 - 商品标签摘要补全为可读节点名称
 - 商品工作台补充 AIGC 候选摘要与 Lookbook 关联摘要
+- taxonomy 管理接口补齐 parent 重挂、清空 parent 和候选提升兼容行为
+- 商品治理完整性语义收敛为“平铺图 + 展示图”
 
 ## 技术栈
 
@@ -81,6 +83,15 @@ conda activate qiaofei
 cd gallery-api
 pip install -r requirements.txt
 ```
+
+运行环境建议：
+
+- Python `3.10+`
+
+说明：
+
+- 当前代码已使用 `str | None` 这类 Python 3.10 联合类型语法
+- 如果仍用 Python 3.9，`pytest` 可能会在收集阶段直接失败
 
 ### 2. 配置环境变量
 
@@ -182,6 +193,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 
 - `POST /assets/upload` 支持 `asset_type`
 - 资产商品关系返回中包含 `product_id`
+- `POST /assets/{asset_id}/products/bind` 支持在未显式传 `relation_role` 时，根据 `asset_type` 推导默认关系
 
 ### 2. Search
 
@@ -224,6 +236,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `GET /products/governance/items`
 - `GET /products/{product_id}/workbench`
 - `problem=in_lookbook` 筛选语义
+- 完整性语义由“缺模特图 / 缺广告图”收敛为“缺展示图”，其中展示图 = `model_set + advertising`
 - 标签返回补充 `node_name`
 - `quality_issues` 不再把 `complete` 当成问题项
 
@@ -241,6 +254,21 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - provider 不再使用 Ark 已废弃的 `n`
 - 保留 `candidate_count` 接口兼容层
 - 支持基于候选图继续发起自动优化 / 自定义提示词优化
+
+### 5. Taxonomy
+
+支持：
+
+- taxonomy 树查询
+- 节点创建、改名、停用
+- `parent_id` 重挂与清空，支持树结构调整
+- 候选标签审核与提升
+
+当前封版新增点：
+
+- `POST /taxonomy/candidates/{candidate_id}/promote` 兼容无 body 调用
+- `PATCH /taxonomy/nodes/{node_id}` 支持显式传 `parent_id: null`，将节点移回顶级
+- taxonomy 前端工作台依赖这些接口完成拖拽改层级、移到顶级节点等操作
 
 ## 核心接口摘要
 
@@ -302,6 +330,15 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `DELETE /taxonomy/nodes/{node_id}`
 - `GET /taxonomy/candidates`
 - `POST /taxonomy/candidates/{candidate_id}/promote`
+
+接口语义补充：
+
+- `PATCH /taxonomy/nodes/{node_id}`
+  - `{"parent_id": "<uuid>"}`：挂到指定父节点下
+  - `{"parent_id": null}`：移回当前维度顶级
+- `POST /taxonomy/candidates/{candidate_id}/promote`
+  - 无 body：提升为顶级节点
+  - `{"parent_id": "<uuid>"}`：提升到指定父节点下
 
 ### Search
 
