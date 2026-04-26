@@ -15,6 +15,7 @@ class TaxonomyNodeCreate(BaseModel):
 class TaxonomyNodeUpdate(BaseModel):
     name: str | None = None
     name_en: str | None = None
+    parent_id: uuid.UUID | None = None
     sort_order: int | None = None
     is_active: bool | None = None
 
@@ -29,6 +30,10 @@ class TaxonomyNodeOut(BaseModel):
     parent_id: uuid.UUID | None
     sort_order: int
     is_active: bool
+
+
+class CandidatePromoteIn(BaseModel):
+    parent_id: uuid.UUID | None = None
 
 
 class CandidateOut(BaseModel):

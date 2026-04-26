@@ -11,6 +11,7 @@ from app.assets.service import (
     batch_ingest_from_storage, create_reprocess_job, get_asset_tags, list_assets_filtered,
     patch_human_tags, run_reprocess_job, run_reprocess_job_standalone, trigger_asset_processing, upload_asset,
     bind_asset_to_product, unbind_asset_product, list_asset_products,
+    _relation_role_for_asset_type,
 )
 from app.auth.deps import get_current_user, get_current_user_with_query_token, require_role
 from app.auth.models import User, UserRole
@@ -32,7 +33,7 @@ class BatchIngestStorageRequest(BaseModel):
 
 class AssetProductBindRequest(BaseModel):
     product_code: str
-    relation_role: AssetProductRole = AssetProductRole.manual
+    relation_role: Optional[AssetProductRole] = None
     source: str = "manual"
 
 
@@ -217,11 +218,15 @@ def bind_product(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
 ):
+    asset = db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    role = body.relation_role if body.relation_role is not None else _relation_role_for_asset_type(asset.asset_type)
     out = bind_asset_to_product(
         db,
         asset_id=asset_id,
         product_code=body.product_code,
-        relation_role=body.relation_role,
+        relation_role=role,
         source=body.source,
     )
     if not out:

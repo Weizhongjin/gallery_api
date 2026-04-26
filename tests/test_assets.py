@@ -181,3 +181,67 @@ def test_get_asset_file_requires_auth(client):
     import uuid
     response = client.get(f"/assets/{uuid.uuid4()}/file?kind=thumb")
     assert response.status_code == 401
+
+
+class TestBindDefaultRoleDerivation:
+    """Binding without relation_role auto-derives from asset.asset_type."""
+
+    def _upload(self, client, token, mock_storage, asset_type="flatlay"):
+        image_data = make_jpeg_bytes(200, 200)
+        response = client.post(
+            f"/assets/upload?asset_type={asset_type}",
+            files={"file": ("test.jpg", image_data, "image/jpeg")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 201
+        return response.json()["id"]
+
+    def test_flatlay_defaults_to_flatlay_primary(self, client, editor_token, db, mock_storage):
+        asset_id = self._upload(client, editor_token, mock_storage, "flatlay")
+        resp = client.post(
+            f"/assets/{asset_id}/products/bind",
+            json={"product_code": "FLAT001"},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["relation_role"] == "flatlay_primary"
+
+    def test_model_set_defaults_to_model_ref(self, client, editor_token, db, mock_storage):
+        asset_id = self._upload(client, editor_token, mock_storage, "model_set")
+        resp = client.post(
+            f"/assets/{asset_id}/products/bind",
+            json={"product_code": "MODEL001"},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["relation_role"] == "model_ref"
+
+    def test_advertising_defaults_to_advertising_ref(self, client, editor_token, db, mock_storage):
+        asset_id = self._upload(client, editor_token, mock_storage, "advertising")
+        resp = client.post(
+            f"/assets/{asset_id}/products/bind",
+            json={"product_code": "AD001"},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["relation_role"] == "advertising_ref"
+
+    def test_unknown_defaults_to_manual(self, client, editor_token, db, mock_storage):
+        asset_id = self._upload(client, editor_token, mock_storage, "unknown")
+        resp = client.post(
+            f"/assets/{asset_id}/products/bind",
+            json={"product_code": "UKN001"},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["relation_role"] == "manual"
+
+    def test_explicit_role_overrides_default(self, client, editor_token, db, mock_storage):
+        asset_id = self._upload(client, editor_token, mock_storage, "flatlay")
+        resp = client.post(
+            f"/assets/{asset_id}/products/bind",
+            json={"product_code": "EXP001", "relation_role": "manual"},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["relation_role"] == "manual"

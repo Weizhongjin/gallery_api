@@ -58,6 +58,28 @@ def test_patch_taxonomy_node(client, admin_token):
     assert response.json()["name_en"] == "Red"
 
 
+def test_patch_taxonomy_node_can_clear_parent(client, admin_token):
+    parent = client.post(
+        "/taxonomy/nodes",
+        json={"dimension": "style", "name": "风格总类"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    ).json()
+    child = client.post(
+        "/taxonomy/nodes",
+        json={"dimension": "style", "name": "职业", "parent_id": parent["id"]},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    ).json()
+
+    response = client.patch(
+        f"/taxonomy/nodes/{child['id']}",
+        json={"parent_id": None},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parent_id"] is None
+
+
 def test_delete_taxonomy_node_soft(client, admin_token, db):
     create = client.post(
         "/taxonomy/nodes",
@@ -83,3 +105,50 @@ def test_list_candidates_empty(client, admin_token):
     response = client.get("/taxonomy/candidates", headers={"Authorization": f"Bearer {admin_token}"})
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+def test_promote_candidate_with_parent(client, admin_token, db):
+    root = client.post(
+        "/taxonomy/nodes",
+        json={"dimension": "style", "name": "风格总类"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    ).json()
+
+    import uuid
+    from app.assets.models import TaxonomyCandidate
+    label1 = f"commute-{uuid.uuid4().hex[:6]}"
+    candidate = TaxonomyCandidate(raw_label=label1, dimension="style", hit_count=3, reviewed=False)
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+
+    response = client.post(
+        f"/taxonomy/candidates/{candidate.id}/promote",
+        json={"parent_id": root["id"]},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == label1
+    assert body["parent_id"] == root["id"]
+
+
+def test_promote_candidate_without_body_still_works(client, admin_token, db):
+    import uuid
+    from app.assets.models import TaxonomyCandidate
+    label = f"nobody-test-{uuid.uuid4().hex[:6]}"
+    candidate = TaxonomyCandidate(raw_label=label, dimension="style", hit_count=5, reviewed=False)
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+
+    response = client.post(
+        f"/taxonomy/candidates/{candidate.id}/promote",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == label
+    assert body["parent_id"] is None

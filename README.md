@@ -6,7 +6,7 @@
 
 - 当前封版标签：`release1.2`
 - 当前主要分支：`main`
-- 最近更新时间：`2026-04-23`
+- 最近更新时间：`2026-04-24`
 - Swagger UI：`http://127.0.0.1:8000/docs`
 - OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
 
@@ -20,6 +20,9 @@
 - 资产上传 / 资产商品关联接口补齐
 - lookbook section 编辑模型、排序能力与兼容层完善
 - Celery 队列与 Ark key 兼容配置补齐
+- 商品治理总览 / 问题商品池 / 商品工作台聚合接口上线
+- 商品标签摘要补全为可读节点名称
+- 商品工作台补充 AIGC 候选摘要与 Lookbook 关联摘要
 
 ## 技术栈
 
@@ -206,6 +209,24 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - buyer 端 section flatten 兼容输出
 - 商品池可用 `has_assets=true` 仅筛出已关联图片商品
 
+### 4. Product Governance / Workbench
+
+支持：
+
+- 商品素材完整性治理总览
+- 问题商品池筛选与搜索
+- 商品工作台聚合视图
+- workbench 内 AIGC / Lookbook / 标签 / 质量问题摘要
+
+当前封版新增点：
+
+- `GET /products/governance/summary`
+- `GET /products/governance/items`
+- `GET /products/{product_id}/workbench`
+- `problem=in_lookbook` 筛选语义
+- 标签返回补充 `node_name`
+- `quality_issues` 不再把 `complete` 当成问题项
+
 ### 4. AIGC
 
 支持：
@@ -251,12 +272,19 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - `GET /products/{product_id}/assets`
 - `GET /products/{product_id}/tags`
 - `PATCH /products/{product_id}/tags`
+- `GET /products/governance/summary`
+- `GET /products/governance/items`
+- `GET /products/{product_id}/workbench`
 - `POST /products/admin/sales/sync`
 
 常用筛选补充：
 
 - `GET /products?has_assets=true`
   仅返回至少已绑定 1 张图片资产的商品，适合 lookbook 待选商品池。
+- `GET /products/governance/items?problem=in_lookbook`
+  仅返回已经进入至少一个 lookbook 的商品。
+- `GET /products/{product_id}/workbench`
+  返回商品基础信息、完整性状态、推荐动作、分组素材、AIGC 摘要、Lookbook 摘要、标签摘要和质量问题列表。
 - `POST /products/admin/sales/sync`
   按 `source=budan` 整体替换销售原始数据，再重建 `product_sales_summary`。
 

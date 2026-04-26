@@ -17,7 +17,10 @@ def derive_product_governance_state(
     lookbook_count: int,
     tag_count: int,
 ) -> GovernanceState:
-    if flatlay_count + model_count + advertising_count == 0:
+    display_count = model_count + advertising_count
+    total_assets = flatlay_count + display_count
+
+    if total_assets == 0:
         return GovernanceState(
             "missing_all_assets",
             ["lookbook_unused", "tagging_incomplete"],
@@ -25,22 +28,25 @@ def derive_product_governance_state(
         )
 
     if flatlay_count == 0:
-        tags = []
+        tags: list[str] = []
         if lookbook_count == 0:
             tags.append("lookbook_unused")
         return GovernanceState("missing_flatlay", tags, "bind_assets")
 
-    if model_count == 0:
-        tags = ["missing_advertising"] if advertising_count == 0 else []
+    if display_count == 0:
+        tags: list[str] = []
+        if advertising_count == 0:
+            tags.append("low_advertising")
         if lookbook_count == 0:
             tags.append("lookbook_unused")
         if tag_count < 2:
             tags.append("tagging_incomplete")
-        return GovernanceState("missing_model", tags, "start_aigc")
+        return GovernanceState("missing_display", tags, "start_aigc")
 
+    # Complete — hard requirements (flatlay + display) are met.
     tags: list[str] = []
     if advertising_count == 0:
-        tags.append("missing_advertising")
+        tags.append("low_advertising")
     if lookbook_count == 0:
         tags.append("lookbook_unused")
     if has_ai_assets:

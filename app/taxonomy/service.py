@@ -52,11 +52,15 @@ def list_candidates(db: Session) -> list[TaxonomyCandidate]:
     )
 
 
-def promote_candidate(db: Session, candidate_id: uuid.UUID) -> TaxonomyNode | None:
+def promote_candidate(db: Session, candidate_id: uuid.UUID, parent_id: uuid.UUID | None = None) -> TaxonomyNode | None:
     cand = db.get(TaxonomyCandidate, candidate_id)
     if not cand:
         return None
-    node = TaxonomyNode(dimension=cand.dimension, name=cand.raw_label)
+    node = TaxonomyNode(
+        dimension=cand.dimension,
+        name=cand.raw_label,
+        parent_id=parent_id,
+    )
     db.add(node)
     cand.reviewed = True
     db.commit()

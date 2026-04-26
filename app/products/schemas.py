@@ -75,7 +75,8 @@ class ProductGovernanceSummaryOut(BaseModel):
     total_products: int
     missing_all_assets: int
     missing_flatlay: int
-    missing_model: int
+    missing_display: int
+    missing_model: int = 0  # deprecated, kept for compat
     missing_advertising: int
     in_lookbook: int
 
@@ -91,6 +92,7 @@ class ProductGovernanceItemOut(BaseModel):
     flatlay_count: int
     model_count: int
     advertising_count: int
+    display_count: int = 0
     primary_asset_id: uuid.UUID | None = None
 
 

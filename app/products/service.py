@@ -449,11 +449,22 @@ def list_product_governance_items(
             tag_count=row.tag_count or 0,
         )
         if problem and problem != "all":
-            if problem == "missing_advertising" and "missing_advertising" not in state.aux_tags:
-                continue
-            elif problem == "in_lookbook" and "lookbook_unused" in state.aux_tags:
-                continue
-            elif problem not in (state.completeness_state, "missing_advertising", "in_lookbook"):
+            # Support both old "missing_model" and new "missing_display" filter names
+            effective_state = state.completeness_state
+            if problem == "missing_model":
+                # backward compat: missing_model → missing_display
+                if effective_state != "missing_display":
+                    continue
+            elif problem == "missing_display":
+                if effective_state != "missing_display":
+                    continue
+            elif problem == "low_advertising":
+                if "low_advertising" not in state.aux_tags:
+                    continue
+            elif problem == "in_lookbook":
+                if "lookbook_unused" in state.aux_tags:
+                    continue
+            elif problem not in (effective_state, "missing_advertising", "in_lookbook", "low_advertising"):
                 continue
 
         items.append({
@@ -467,6 +478,7 @@ def list_product_governance_items(
             "flatlay_count": row.flatlay_count or 0,
             "model_count": row.model_count or 0,
             "advertising_count": row.advertising_count or 0,
+            "display_count": (row.model_count or 0) + (row.advertising_count or 0),
             "primary_asset_id": row.primary_asset_id,
         })
 
@@ -481,8 +493,9 @@ def get_product_governance_summary(db: Session) -> dict:
         "total_products": len(items),
         "missing_all_assets": sum(1 for it in items if it["completeness_state"] == "missing_all_assets"),
         "missing_flatlay": sum(1 for it in items if it["completeness_state"] == "missing_flatlay"),
-        "missing_model": sum(1 for it in items if it["completeness_state"] == "missing_model"),
-        "missing_advertising": sum(1 for it in items if "missing_advertising" in it["aux_tags"]),
+        "missing_display": sum(1 for it in items if it["completeness_state"] == "missing_display"),
+        "missing_model": sum(1 for it in items if it["completeness_state"] == "missing_display"),
+        "missing_advertising": sum(1 for it in items if "low_advertising" in it["aux_tags"]),
         "in_lookbook": sum(1 for it in items if "lookbook_unused" not in it["aux_tags"]),
     }
 
@@ -539,10 +552,15 @@ def get_product_workbench(db: Session, product_id: uuid.UUID) -> dict | None:
         .all()
     )
 
+    flatlay_count = len(grouped_assets["flatlay"])
+    model_count = len(grouped_assets["model_set"])
+    advertising_count = len(grouped_assets["advertising"])
+    display_count = model_count + advertising_count
+
     state = derive_product_governance_state(
-        flatlay_count=len(grouped_assets["flatlay"]),
-        model_count=len(grouped_assets["model_set"]),
-        advertising_count=len(grouped_assets["advertising"]),
+        flatlay_count=flatlay_count,
+        model_count=model_count,
+        advertising_count=advertising_count,
         has_ai_assets=ai_asset_count > 0,
         lookbook_count=lookbook_count,
         tag_count=len(tags),
@@ -557,6 +575,12 @@ def get_product_workbench(db: Session, product_id: uuid.UUID) -> dict | None:
         "completeness_state": state.completeness_state,
         "aux_tags": state.aux_tags,
         "recommended_action": state.recommended_action,
+        "asset_counts": {
+            "flatlay": flatlay_count,
+            "model": model_count,
+            "advertising": advertising_count,
+            "display": display_count,
+        },
         "grouped_assets": {
             key: [
                 ProductAssetOut(

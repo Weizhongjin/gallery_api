@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user, require_role
 from app.auth.models import User, UserRole
 from app.database import get_db
-from app.taxonomy.schemas import CandidateOut, TaxonomyNodeCreate, TaxonomyNodeOut, TaxonomyNodeUpdate
+from app.taxonomy.schemas import CandidateOut, CandidatePromoteIn, TaxonomyNodeCreate, TaxonomyNodeOut, TaxonomyNodeUpdate
 from app.taxonomy.service import (
     create_node, deactivate_node, delete_candidate,
     list_candidates, list_nodes, promote_candidate, update_node,
@@ -38,7 +38,7 @@ def patch(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin)),
 ):
-    node = update_node(db, node_id, **body.model_dump(exclude_none=True))
+    node = update_node(db, node_id, **body.model_dump(exclude_unset=True))
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
@@ -65,10 +65,11 @@ def get_candidates(
 @router.post("/candidates/{candidate_id}/promote", response_model=TaxonomyNodeOut, status_code=status.HTTP_201_CREATED)
 def promote(
     candidate_id: uuid.UUID,
+    body: CandidatePromoteIn = CandidatePromoteIn(),
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin)),
 ):
-    node = promote_candidate(db, candidate_id)
+    node = promote_candidate(db, candidate_id, parent_id=body.parent_id)
     if not node:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return node

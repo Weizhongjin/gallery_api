@@ -37,6 +37,9 @@ from app.products.sales_sync import sync_sales_from_budan
 router = APIRouter(prefix="/products", tags=["products"])
 
 
+# ── Static routes (must precede /{product_id}) ──────────────────────
+
+
 @router.post("/upsert", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
 def upsert(
     body: ProductUpsertIn,
@@ -95,6 +98,66 @@ def list_all(
         for product, sales_total_qty in items
     ]
     return {"items": out_items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/governance/summary", response_model=ProductGovernanceSummaryOut)
+def governance_summary(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return get_product_governance_summary(db)
+
+
+@router.get("/governance/items")
+def governance_items(
+    problem: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 24,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    items, total = list_product_governance_items(
+        db, problem=problem, q=q, page=page, page_size=page_size
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/admin/unresolved-assets")
+def unresolved_assets(
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    rows = list_unresolved_assets(db, page=page, page_size=page_size)
+    return [
+        {
+            "asset_id": str(a.id),
+            "filename": a.filename,
+            "asset_type": a.asset_type,
+            "source_dataset": a.source_dataset,
+            "source_relpath": a.source_relpath,
+            "parse_status": a.parse_status,
+        }
+        for a in rows
+    ]
+
+
+@router.post("/admin/sales/sync")
+def sync_sales(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
+):
+    summary = sync_sales_from_budan(
+        db,
+        budan_database_url=settings.budan_database_url,
+        source="budan",
+    )
+    return summary
+
+
+# ── Dynamic routes (/products/{product_id}/...) ──────────────────────
 
 
 @router.get("/{product_id}", response_model=ProductOut)
@@ -195,60 +258,3 @@ def product_workbench(
     if not payload:
         raise HTTPException(status_code=404, detail="Product not found")
     return payload
-
-
-@router.get("/governance/summary", response_model=ProductGovernanceSummaryOut)
-def governance_summary(
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    return get_product_governance_summary(db)
-
-
-@router.get("/governance/items")
-def governance_items(
-    problem: str | None = None,
-    q: str | None = None,
-    page: int = 1,
-    page_size: int = 24,
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    items, total = list_product_governance_items(
-        db, problem=problem, q=q, page=page, page_size=page_size
-    )
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
-
-
-@router.get("/admin/unresolved-assets")
-def unresolved_assets(
-    page: int = 1,
-    page_size: int = 50,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
-):
-    rows = list_unresolved_assets(db, page=page, page_size=page_size)
-    return [
-        {
-            "asset_id": str(a.id),
-            "filename": a.filename,
-            "asset_type": a.asset_type,
-            "source_dataset": a.source_dataset,
-            "source_relpath": a.source_relpath,
-            "parse_status": a.parse_status,
-        }
-        for a in rows
-    ]
-
-
-@router.post("/admin/sales/sync")
-def sync_sales(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_role(UserRole.admin, UserRole.editor)),
-):
-    summary = sync_sales_from_budan(
-        db,
-        budan_database_url=settings.budan_database_url,
-        source="budan",
-    )
-    return summary

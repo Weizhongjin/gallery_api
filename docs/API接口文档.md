@@ -88,6 +88,11 @@
 - `GET /products/{product_id}/tags`：查看商品标签
 - `PATCH /products/{product_id}/tags`：人工维护商品标签
 - `POST /products/{product_id}/tags/rebuild`：按关联资产标签重建聚合标签
+- 标签响应补充：
+  - `node_id`
+  - `node_name`
+  - `source`
+  - `confidence`
 
 ### GET `/products/governance/summary`
 - 说明：商品治理总览指标。
@@ -95,10 +100,74 @@
 
 ### GET `/products/governance/items`
 - 说明：治理问题商品池，支持按问题类型筛选。
-- 参数：`problem`（`all|missing_all_assets|missing_flatlay|missing_model|missing_advertising`）、`q`（商品码/名称搜索）、`page` / `page_size`
+- 参数：`problem`（`all|missing_all_assets|missing_flatlay|missing_model|missing_advertising|in_lookbook`）、`q`（商品码/名称搜索）、`page` / `page_size`
+- 响应字段：
+  - `completeness_state`
+  - `aux_tags`
+  - `recommended_action`
+  - `flatlay_count`
+  - `model_count`
+  - `advertising_count`
+  - `primary_asset_id`
+- 语义补充：
+  - `in_lookbook` 表示商品已进入至少一个画册
+  - `missing_advertising` 是辅助问题，不会降低 `complete` 主状态
 
 ### GET `/products/{product_id}/workbench`
 - 说明：商品工作台聚合详情，包含基础信息、完整性状态、推荐动作、分组资产、AIGC 摘要、Lookbook 摘要、标签与质量问题列表。
+- 典型返回结构：
+  ```json
+  {
+    "product": {
+      "id": "uuid",
+      "product_code": "B300021",
+      "name": "通勤连衣裙",
+      "sales_total_qty": 88
+    },
+    "completeness_state": "missing_model",
+    "aux_tags": ["missing_advertising", "lookbook_unused"],
+    "recommended_action": "start_aigc",
+    "grouped_assets": {
+      "flatlay": [],
+      "model_set": [],
+      "advertising": [],
+      "unknown": []
+    },
+    "aigc_summary": {
+      "latest_task_id": "uuid",
+      "latest_task_status": "review_pending",
+      "latest_task_created_at": "2026-04-24T12:30:00+08:00",
+      "latest_task_workflow_type": "base",
+      "latest_task_candidate_count": 4,
+      "latest_selected_candidate_count": 1,
+      "has_selected_candidate": true
+    },
+    "lookbook_summary": {
+      "count": 1,
+      "items": [
+        { "id": "uuid", "title": "春夏推荐册" }
+      ]
+    },
+    "tag_summary": [
+      {
+        "node_id": "uuid",
+        "node_name": "通勤",
+        "source": "human",
+        "confidence": null
+      }
+    ],
+    "quality_issues": ["missing_model", "missing_advertising"]
+  }
+  ```
+- 语义补充：
+  - `grouped_assets` 固定返回 `flatlay / model_set / advertising / unknown`
+  - `quality_issues` 仅返回真实问题项；素材完整商品不会返回 `complete`
+  - `recommended_action` 当前可能值包括：
+    - `bind_assets`
+    - `start_aigc`
+    - `generate_advertising_asset`
+    - `add_to_lookbook`
+    - `maintain_tags`
 
 ### GET `/products/admin/unresolved-assets`
 - 说明：查看未解析商品号的资产（运营排查）
