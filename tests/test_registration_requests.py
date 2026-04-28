@@ -1,5 +1,36 @@
 from app.auth.models import User, UserRegistrationRequest, UserRole
-from app.auth.service import hash_password
+from app.auth.service import hash_password, create_access_token
+
+
+def test_admin_can_approve_registration_request(client, db):
+    # Create an admin user for auth
+    admin = User(
+        email="admin-approve@example.com",
+        password_hash=hash_password("pw"),
+        name="Admin Approve",
+        role=UserRole.admin,
+    )
+    db.add(admin)
+    db.flush()
+    admin_token = create_access_token(str(admin.id))
+
+    req = UserRegistrationRequest(
+        email="approve@example.com",
+        password_hash=hash_password("secret123"),
+        name="Approve Me",
+    )
+    db.add(req)
+    db.flush()
+
+    response = client.post(
+        f"/users/registration-requests/{req.id}/approve",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["email"] == "approve@example.com"
+    assert response.json()["role"] == "viewer"
+    assert db.query(UserRegistrationRequest).filter_by(email="approve@example.com").first() is None
 
 
 def test_register_request_creates_pending_record(client, db):
