@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+from fastapi import HTTPException, status
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 
+from app.auth.models import User, UserRegistrationRequest
 from app.config import settings
 
 
@@ -25,3 +28,20 @@ def decode_token(token: str) -> str:
     """Returns user_id string. Raises JWTError on invalid token."""
     payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
     return payload["sub"]
+
+
+def create_registration_request(db: Session, *, email: str, password: str, name: str) -> UserRegistrationRequest:
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=409, detail="该邮箱已存在正式账号")
+    if db.query(UserRegistrationRequest).filter(UserRegistrationRequest.email == email).first():
+        raise HTTPException(status_code=409, detail="该邮箱已有待审核申请")
+
+    req = UserRegistrationRequest(email=email, password_hash=hash_password(password), name=name)
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+def has_pending_registration_request(db: Session, email: str) -> bool:
+    return db.query(UserRegistrationRequest).filter(UserRegistrationRequest.email == email).first() is not None

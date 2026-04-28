@@ -122,6 +122,19 @@ def db(db_engine):
     connection.execute(
         text(
             """
+            CREATE TABLE IF NOT EXISTS user_registration_request (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              email varchar(255) NOT NULL UNIQUE,
+              password_hash varchar(255) NOT NULL,
+              name varchar(120) NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
             CREATE TABLE IF NOT EXISTS sales_order_raw (
               id serial PRIMARY KEY,
               source varchar NOT NULL DEFAULT 'budan',
