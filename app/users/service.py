@@ -43,11 +43,19 @@ def update_user_safe(db: Session, actor_id: uuid.UUID, user_id: uuid.UUID, **kwa
     user = db.get(User, user_id)
     if not user:
         return None
-    if user.role == UserRole.admin and kwargs.get("role") and kwargs["role"] != UserRole.admin:
-        if actor_id == user_id:
-            raise HTTPException(status_code=409, detail="不能移除当前登录管理员的管理员角色")
-        if _active_admin_count(db) <= 1:
-            raise HTTPException(status_code=409, detail="系统至少需要保留一个管理员")
+    if user.role == UserRole.admin:
+        # Prevent downgrade via role change
+        if kwargs.get("role") and kwargs["role"] != UserRole.admin:
+            if actor_id == user_id:
+                raise HTTPException(status_code=409, detail="不能移除当前登录管理员的管理员角色")
+            if _active_admin_count(db) <= 1:
+                raise HTTPException(status_code=409, detail="系统至少需要保留一个管理员")
+        # Prevent deactivation via is_active=False on the PATCH endpoint
+        if kwargs.get("is_active") is False and user.is_active:
+            if actor_id == user_id:
+                raise HTTPException(status_code=409, detail="不能停用当前登录管理员账号")
+            if _active_admin_count(db) <= 1:
+                raise HTTPException(status_code=409, detail="系统至少需要保留一个管理员")
     return update_user(db, user_id, **kwargs)
 
 

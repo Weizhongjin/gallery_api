@@ -5,9 +5,9 @@ from app.auth.deps import get_current_user
 from app.auth.models import User
 from app.auth.schemas import LoginRequest, RegisterRequest, RegisterResponse, TokenResponse, UserOut
 from app.auth.service import (
+    check_pending_login,
     create_access_token,
     create_registration_request,
-    has_pending_registration_request,
     verify_password,
 )
 from app.database import get_db
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email, User.is_active == True).first()
     if not user:
-        if has_pending_registration_request(db, body.email):
+        if check_pending_login(db, body.email, body.password):
             raise HTTPException(status_code=403, detail="账号待审核，暂时不能登录")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not verify_password(body.password, user.password_hash):

@@ -45,3 +45,11 @@ def create_registration_request(db: Session, *, email: str, password: str, name:
 
 def has_pending_registration_request(db: Session, email: str) -> bool:
     return db.query(UserRegistrationRequest).filter(UserRegistrationRequest.email == email).first() is not None
+
+
+def check_pending_login(db: Session, email: str, password: str) -> bool:
+    """Return True if a pending registration request exists AND the password matches."""
+    pending = db.query(UserRegistrationRequest).filter(UserRegistrationRequest.email == email).first()
+    if pending and verify_password(password, pending.password_hash):
+        return True
+    return False

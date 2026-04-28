@@ -135,3 +135,24 @@ def test_last_admin_cannot_be_deactivated(client, db):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "不能停用当前登录管理员账号"
+
+
+def test_patch_is_active_false_cannot_bypass_admin_protection(client, db):
+    admin = User(
+        email=f"admin-bypass-{uuid.uuid4().hex[:6]}@example.com",
+        password_hash=hash_password("pw"),
+        name="Admin Bypass",
+        role=UserRole.admin,
+    )
+    db.add(admin)
+    db.flush()
+    token = create_access_token(str(admin.id))
+
+    response = client.patch(
+        f"/users/{admin.id}",
+        json={"is_active": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "不能停用当前登录管理员账号"

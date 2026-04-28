@@ -103,3 +103,22 @@ def test_login_with_pending_registration_request_returns_review_message(client, 
 
     assert response.status_code == 403
     assert response.json()["detail"] == "账号待审核，暂时不能登录"
+
+
+def test_login_with_wrong_password_on_pending_does_not_reveal_existence(client, db):
+    db.add(
+        UserRegistrationRequest(
+            email="pending-secret@example.com",
+            password_hash=hash_password("secret123"),
+            name="Pending Secret",
+        )
+    )
+    db.flush()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "pending-secret@example.com", "password": "wrongpassword"},
+    )
+
+    assert response.status_code == 401
+    assert "待审核" not in response.json()["detail"]
