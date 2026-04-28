@@ -32,6 +32,7 @@ class LookbookOut(BaseModel):
     id: uuid.UUID
     title: str
     cover_asset_id: uuid.UUID | None
+    resolved_cover_asset_id: uuid.UUID | None = None
     is_published: bool
     created_by: uuid.UUID
     created_at: datetime

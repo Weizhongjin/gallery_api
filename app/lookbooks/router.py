@@ -22,6 +22,7 @@ from app.lookbooks.schemas import (
 from app.lookbooks.service import (
     add_item, add_product_section, add_section_items, create_lookbook, flattened_buyer_items,
     get_buyer_lookbooks, get_lookbook_items,
+    _resolve_lookbook_cover_asset_id,
     grant_access, list_access, list_lookbooks, list_sections, remove_item, remove_section,
     remove_section_item, reorder_sections,
     revoke_access, set_published, update_lookbook,
@@ -42,7 +43,14 @@ def create(
 
 @router.get("/lookbooks", response_model=list[LookbookOut])
 def list_all(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return list_lookbooks(db)
+    rows = list_lookbooks(db)
+    return [
+        LookbookOut.model_validate({
+            **row.__dict__,
+            "resolved_cover_asset_id": _resolve_lookbook_cover_asset_id(db, row),
+        })
+        for row in rows
+    ]
 
 
 @router.patch("/lookbooks/{lb_id}", response_model=LookbookOut)

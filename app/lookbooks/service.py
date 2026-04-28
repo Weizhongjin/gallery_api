@@ -24,6 +24,28 @@ def create_lookbook(db: Session, title: str, created_by: uuid.UUID, cover_asset_
     return lb
 
 
+def _resolve_lookbook_cover_asset_id(db: Session, lookbook: Lookbook) -> uuid.UUID | None:
+    if lookbook.cover_asset_id:
+        return lookbook.cover_asset_id
+
+    first_section = (
+        db.query(LookbookProductSection)
+        .filter(LookbookProductSection.lookbook_id == lookbook.id)
+        .order_by(LookbookProductSection.sort_order.asc(), LookbookProductSection.created_at.asc())
+        .first()
+    )
+    if first_section and first_section.cover_asset_id:
+        return first_section.cover_asset_id
+
+    first_item = (
+        db.query(LookbookItem)
+        .filter(LookbookItem.lookbook_id == lookbook.id)
+        .order_by(LookbookItem.sort_order.asc())
+        .first()
+    )
+    return first_item.asset_id if first_item else None
+
+
 def list_lookbooks(db: Session) -> list[Lookbook]:
     return db.query(Lookbook).order_by(Lookbook.created_at.desc()).all()
 
