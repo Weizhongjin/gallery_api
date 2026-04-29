@@ -212,6 +212,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - buyer 授权访问
 - section-based 编辑接口
 - legacy `lookbook_item` 兼容显示
+- 封面回退：`resolved_cover_asset_id` 按 cover → section cover → first item asset 降级
 
 当前封版新增点：
 
@@ -220,6 +221,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 - mutation path 与 `lookbook_id` 一致性校验
 - buyer 端 section flatten 兼容输出
 - 商品池可用 `has_assets=true` 仅筛出已关联图片商品
+- `GET /lookbooks` 列表返回 `resolved_cover_asset_id`，前端无需自行做封面回退
 
 ### 4. Product Governance / Workbench
 
@@ -274,9 +276,20 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloth_gallery \
 
 ### Auth / Users
 
-- `POST /auth/register`
-- `POST /auth/login`
-- `GET /users`
+注册与审核流程：
+
+- `POST /auth/register` — 创建待审核注册申请（非正式账号），密码匹配才返回 403 提示
+- `POST /auth/login` — 待审核账号正确密码返回 403 "账号待审核，暂时不能登录"，错误密码返回通用 401
+- `GET /users` — 管理员列表所有用户
+- `GET /users/registration-requests` — 管理员查看待审核申请
+- `POST /users/registration-requests/{id}/approve` — 通过申请，创建正式 `viewer` 用户并删除申请
+- `DELETE /users/registration-requests/{id}` — 拒绝并删除申请
+
+管理员安全规则：
+
+- 不允许通过 PATCH role 或 DELETE 移除最后一个管理员
+- 不允许通过 PATCH is_active=false 绕过 deactivate 保护
+- 不允许管理员自降级或自停用
 
 ### Assets
 
